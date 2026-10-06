@@ -1,5 +1,8 @@
 ; hw.inc - breadboard computer hardware (README section 2)
 ;
+; Addresses and ACIA settings follow the be6502 project (rom/bios.s and
+; pld/decode.pld).
+;
 ; All of these live in bank 0. Kernel code runs with the data bank register
 ; at 0 and can use them as plain absolute addresses. A process runs with its
 ; own bank in the data bank register, so it must use long addressing to reach
@@ -8,7 +11,7 @@
 CPU_HZ      = 6000000
 BAUD        = 115200
 
-; W65C22 VIA
+; W65C22 VIA: I/O slot Y0, $6000-$63FF (registers mirrored on A0-A3)
 VIA         = $6000
 VIA_PORTB   = VIA + $0
 VIA_PORTA   = VIA + $1
@@ -29,7 +32,7 @@ VIA_IER     = VIA + $E
 VIA_INT_T1  = %01000000     ; IFR / IER bit for timer 1
 VIA_INT_T2  = %00100000     ; IFR / IER bit for timer 2
 
-; W65C51N ACIA
+; W65C51N ACIA: I/O slot Y4, $7000-$73FF (registers mirrored on A0-A1)
 ACIA        = $7000
 ACIA_DATA   = ACIA + 0
 ACIA_STATUS = ACIA + 1      ; read clears the IRQ bit. write: programmed reset
@@ -43,5 +46,6 @@ ACIA_ST_RDRF = %00001000    ; receive data register full
 ; On the W65C51N with a 1.8432 MHz crystal, SBR 0000 selects 115200 baud.
 ACIA_CTRL_VALUE = %00010000
 ; Command: no parity, no echo, RTS low with transmit interrupts off,
-; receive interrupts on, DTR low (receiver enabled).
-ACIA_CMD_VALUE  = %00001001
+; receive interrupts on, DTR low (receiver enabled). Bits 7-6 only matter
+; when parity is enabled (bit 5); $89 matches be6502's ACIA_SETUP.
+ACIA_CMD_VALUE  = %10001001

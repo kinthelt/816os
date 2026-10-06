@@ -35,13 +35,13 @@ make run        # run the demo ROM in the simulator; typed keys go to the ACIA
 
 **The simulator** models the CPU, the VIA timers and port B, and the ACIA. It includes the W65C51N's stuck transmit-empty bit and counts receive overruns and characters sent too close together. Cycle counts are approximate, so timings are close to the hardware's but not exact. The tests cover register preservation under preemption (a torture program checks A, B, X, Y, D, the data bank register and register widths while timer and ACIA interrupts switch processes), loading one image into several banks, exit, BRK recovery with the console lock held, idle, echo, and 200-character receive bursts with no overruns.
 
-**Check against the hardware before burning a ROM:**
+**Matches be6502** (`rom/bios.s`, `pld/decode.pld`): the memory map and I/O slots, the ACIA's control (`$10`) and command (`$89`) values, and the timer 2 transmit delay (`TX_CYCLES`' formula, 572 cycles at 6 MHz). The simulator uses the GAL's decode.
 
-- **ACIA setup.** `ACIA_CTRL_VALUE` = `$10` (8N1, internal baud rate generator, SBR 0000 = 115200 on the W65C51N) and `ACIA_CMD_VALUE` = `$09` in `include/hw.inc`. Compare with the current build's init code.
-- **Transmit delay.** `TX_DELAY` in `include/kernel.inc` is one character time plus 16 cycles (536 cycles at 6 MHz). Compare with the timer 2 value the current build uses.
-- **ACIA buffer at $5D00** and the VIA's IRQ wiring: the open items in sections 5 and 11.
+**Still to check or decide before burning a ROM:**
+
+- **Receive flow control.** The BIOS drops RTS (command `$01`) when its buffer is nearly full and raises it again in `CHRIN`. The kernel doesn't do this yet, so a sender that keeps going while no process reads will overflow the ring. On the 6551 family, the command value that raises RTS also turns the transmitter off, which matters once several processes share the console.
+- **VIA IRQ wiring** (section 11): the chip variant decides how its IRQ output can share the line with the ACIA.
 - **Port A** is left untouched. Port B is set to all outputs for the LEDs.
-
 
 ## 1. Summary
 
@@ -102,7 +102,7 @@ Totals exactly 24 KB.
 Every direct page is page-aligned. The datasheet notes direct addressing takes an extra cycle when the low byte of D isn't zero (section 3.5.17).
 
 Two assumptions to confirm:
-- **ACIA buffer at $5D00.** This assumes the buffer moves here. If it lives somewhere else now, either move it or adjust this map.
+- **ACIA buffer at $5D00.** The BIOS keeps its buffer at $0300 (`INPUT_BUFFER` in `rom/bios.cfg`), which is slot 1's direct page here. That's fine while 816os is its own ROM image. If the BIOS and the OS ever share a ROM, the BIOS buffer has to move.
 - **Kernel stack shrunk from 768 to 512 bytes** to fit the ACIA buffer. Boot, idle, and handler work should need well under 256 bytes.
 
 Process slot table (constants in ROM):
@@ -434,7 +434,7 @@ Programs currently run in bank 1 in emulation mode, and ACIA receive is interrup
 | Time slice length | 5 ms (`SLICE_COUNT` in `include/kernel.inc`); tune for console responsiveness |
 | IPC model | Undecided (section 14) |
 | Emulation guest exit behavior | Undecided (section 15) |
-| ACIA buffer location | Proposed $5D00 (section 5); confirm |
+| ACIA buffer location | $5D00 in the 816os ROM; the BIOS's is at $0300 (section 5) |
 | Handler switches to the kernel stack after saving registers | Optional. Isolates handler stack use from process stacks, at a few cycles per interrupt |
 | Blocking | Later phase. The idle loop is built (section 0); processes still wait by yielding in a loop |
 | Yield call | Built, as `COP` (section 0). `K_CON_LOCK` yields while it waits |

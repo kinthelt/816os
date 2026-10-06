@@ -1,9 +1,15 @@
 #!/usr/bin/env python3
 """sim816 - simulator for the 65C816 breadboard computer.
 
-Models the machine in README section 2: a W65C816S, RAM in bank 0 below
-$6000 and in banks 1-7, a W65C22 VIA at $6000, a W65C51N ACIA at $7000 and
-a 32 KB ROM at $8000.
+Models the machine in README section 2, with the address decode from
+be6502's pld/decode.pld: a W65C816S, RAM in bank 0 below $6000 and in banks
+1-7, an I/O window at $6000-$7FFF split into 1 KB slots (W65C22 VIA in slot
+0 at $6000, W65C51N ACIA in slot 4 at $7000), a 32 KB ROM at $8000, and 32 KB
+of video RAM at bank $80.
+
+On the hardware, banks $08-$7F alias banks $00-$07 and the empty I/O slots
+read as a floating bus. The simulator treats touching any of those, or
+writing to ROM, as an error, since the OS should never do it.
 
 Cycle counts are approximate (close to the datasheet, but not exact), so
 timer and serial timings are close to the hardware's, not identical.
@@ -261,6 +267,7 @@ class Bus:
             raise SimError("ROM image must be 32768 bytes, got %d" % len(rom))
         self.rom = bytes(rom)
         self.ram = bytearray(8 * 0x10000)  # bank 0 uses only $0000-$5FFF
+        self.vram = bytearray(0x8000)
         self.cycles = 0
         self.via = VIA()
         self.via.now = lambda: self.cycles
@@ -274,12 +281,19 @@ class Bus:
                 return self.ram[a]
             if a >= 0x8000:
                 return self.rom[a - 0x8000]
-            if a < 0x7000:
+            slot = (a >> 10) & 7
+            if slot == 0:
                 return self.via.read(a & 0xF)
-            return self.acia.read(a & 0x3)
+            if slot == 4:
+                return self.acia.read(a & 0x3)
+            self.errors.append("read from empty I/O slot $%06X" % a)
+            return 0
         if bank < 8:
             return self.ram[a]
-        self.errors.append("read from unmapped $%06X" % a)
+        if bank & 0x80:
+            return self.vram[a & 0x7FFF]
+        self.errors.append("read from $%06X, which aliases bank $%02X"
+                           % (a, bank & 7))
         return 0
 
     def write(self, a, v):
@@ -289,14 +303,21 @@ class Bus:
                 self.ram[a] = v
             elif a >= 0x8000:
                 self.errors.append("write to ROM $%06X" % a)
-            elif a < 0x7000:
-                self.via.write(a & 0xF, v)
             else:
-                self.acia.write(a & 0x3, v)
+                slot = (a >> 10) & 7
+                if slot == 0:
+                    self.via.write(a & 0xF, v)
+                elif slot == 4:
+                    self.acia.write(a & 0x3, v)
+                else:
+                    self.errors.append("write to empty I/O slot $%06X" % a)
         elif bank < 8:
             self.ram[a] = v
+        elif bank & 0x80:
+            self.vram[a & 0x7FFF] = v
         else:
-            self.errors.append("write to unmapped $%06X" % a)
+            self.errors.append("write to $%06X, which aliases bank $%02X"
+                               % (a, bank & 7))
 
     def tick(self, n):
         self.cycles += n

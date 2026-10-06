@@ -16,8 +16,9 @@ APP_LOAD    = $0000         ; where a program image is loaded in its bank
 SLICE_COUNT = CPU_HZ / 200
 
 ; Timer 2 one-shot delay between transmitted characters: one character time
-; (10 bits) plus a small margin. Works around the W65C51N transmit status bug.
-TX_DELAY    = CPU_HZ * 10 / BAUD + 16
+; (10 bits) plus 10%, rounded up. Works around the W65C51N transmit status bug.
+; Same formula as TX_CYCLES in be6502's rom/bios.s (572 cycles at 6 MHz).
+TX_DELAY    = (CPU_HZ * 10 / BAUD * 110 + 99) / 100
 
 ; ---------------------------------------------------------------------------
 ; Service entry and exit.
