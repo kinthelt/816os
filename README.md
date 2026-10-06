@@ -1,6 +1,47 @@
 # 816os: Preemptive Multitasking OS for the 65C816 Breadboard Computer
 
-Design draft. Nothing here has been built or tested yet.
+Design document, plus a first kernel that implements it. The kernel passes its tests in a simulator (`tools/sim816.py`) but has not run on the hardware yet. See section 0 for what's built and what to check before burning a ROM.
+
+## 0. Status and building
+
+Needs the cc65 toolchain (`ca65`, `ld65`) and Python 3 for the simulator and tests.
+
+```
+make            # build/816os.bin: 32 KB ROM image for $8000-$FFFF
+make test       # build the test ROM, run the simulator tests
+make run        # run the demo ROM in the simulator; typed keys go to the ACIA
+```
+
+**What's built:** boot into native mode, the per-process direct pages and stacks (section 5), the 13-byte context frame and timer-driven round-robin scheduler (sections 6-8 and 10), interrupt-driven ACIA receive, paced transmit, the console lock (section 13), and a JSL jump table of kernel services. Beyond the design above:
+
+- **Free slots are skipped.** The process table has a state per slot; the scheduler only picks ready slots.
+- **Idle process.** After boot, the boot code becomes the idle loop (`WAI`) on the kernel stack, in a pseudo-slot 7 that only runs when no process is ready.
+- **Yield is `COP`.** `COP` pushes the same frame as an interrupt, so the yield handler shares the switch code. The next process gets the rest of the current slice; timer 1 is not restarted, so ticks stay evenly spaced.
+- **Exit.** `K_EXIT`, or `RTL` from a process's entry point, frees its slot. `BRK` in a process kills it and records the slot and address. Either way, the kernel releases the console lock if the process held it.
+- **Programs are loaded from ROM.** Each image is linked at $0000 (`cfg/app.cfg`) and copied with `MVN` into $0000 of its slot's bank at boot. The demo ROM loads the same ticker image into two banks.
+
+**Layout:**
+
+| Path | Contents |
+|---|---|
+| `include/os816.inc` | Kernel service addresses and calling rules, for programs |
+| `include/hw.inc` | VIA and ACIA addresses and settings |
+| `kernel/` | Boot, scheduler and interrupt handlers, console driver, jump table, vectors |
+| `apps/` | Demo programs (`ticker`, `leds`, `echo`) and the demo ROM's program table |
+| `tests/` | Simulator tests and the test ROM's programs |
+| `tools/sim816.py` | 65C816 + W65C22 + W65C51N simulator |
+
+**Kernel services:** call with `JSL` to the fixed addresses in `include/os816.inc`: `K_PUTC`, `K_GETC`, `K_PUTS`, `K_YIELD`, `K_EXIT`, `K_GETPID`, `K_TICKS`, `K_CON_LOCK`, `K_CON_UNLOCK`. They keep the caller's register widths, X, Y, D and data bank register. A service that may be preempted keeps its working state on the caller's stack (`K_PUTS` points D at its stack frame), so two processes can be inside the same service at once.
+
+**The simulator** models the CPU, the VIA timers and port B, and the ACIA. It includes the W65C51N's stuck transmit-empty bit and counts receive overruns and characters sent too close together. Cycle counts are approximate, so timings are close to the hardware's but not exact. The tests cover register preservation under preemption (a torture program checks A, B, X, Y, D, the data bank register and register widths while timer and ACIA interrupts switch processes), loading one image into several banks, exit, BRK recovery with the console lock held, idle, echo, and 200-character receive bursts with no overruns.
+
+**Check against the hardware before burning a ROM:**
+
+- **ACIA setup.** `ACIA_CTRL_VALUE` = `$10` (8N1, internal baud rate generator, SBR 0000 = 115200 on the W65C51N) and `ACIA_CMD_VALUE` = `$09` in `include/hw.inc`. Compare with the current build's init code.
+- **Transmit delay.** `TX_DELAY` in `include/kernel.inc` is one character time plus 16 cycles (536 cycles at 6 MHz). Compare with the timer 2 value the current build uses.
+- **ACIA buffer at $5D00** and the VIA's IRQ wiring: the open items in sections 5 and 11.
+- **Port A** is left untouched. Port B is set to all outputs for the LEDs.
+
 
 ## 1. Summary
 
@@ -390,13 +431,13 @@ Programs currently run in bank 1 in emulation mode, and ACIA receive is interrup
 
 | Decision | Current leaning |
 |---|---|
-| Time slice length | Start at 5 ms, tune for console responsiveness |
+| Time slice length | 5 ms (`SLICE_COUNT` in `include/kernel.inc`); tune for console responsiveness |
 | IPC model | Undecided (section 14) |
 | Emulation guest exit behavior | Undecided (section 15) |
 | ACIA buffer location | Proposed $5D00 (section 5); confirm |
 | Handler switches to the kernel stack after saving registers | Optional. Isolates handler stack use from process stacks, at a few cycles per interrupt |
-| Blocking and an idle loop | Later phase. Idle can run on the kernel stack with `WAI` (wait for interrupt), registered as a pseudo-process in the table so the handler can save and resume it |
-| Yield call | Later phase. Lets a process give up its slice, for example while waiting on a lock |
+| Blocking | Later phase. The idle loop is built (section 0); processes still wait by yielding in a loop |
+| Yield call | Built, as `COP` (section 0). `K_CON_LOCK` yields while it waits |
 | VIA IRQ wiring | Check the chip variant and the wiring (section 11) |
 
 ## 19. References
