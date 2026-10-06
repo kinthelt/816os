@@ -41,6 +41,10 @@ acia_init:
 ; its IRQ bit set.
 ; In: A = the status byte. A, X 8-bit, D = 0, data bank 0.
 ; If the ring is full, the byte is dropped.
+;
+; Ctrl-Z never reaches the ring. It pauses the foreground program and gives
+; the keyboard back to the shell. If the shell already has the keyboard, it
+; is ignored.
 
 acia_rx_service:
         .a8
@@ -48,6 +52,8 @@ acia_rx_service:
         and #ACIA_ST_RDRF
         beq @done
         lda ACIA_DATA
+        cmp #KEY_PAUSE
+        beq @pause
         ldx rx_head
         sta RX_BUF,x            ; a full ring never reads this slot, so writing it is safe
         inx
@@ -55,6 +61,23 @@ acia_rx_service:
         beq @done               ; full: don't advance head
         stx rx_head
 @done:
+        rts
+
+@pause:                         ; slot numbers are below $100, so 8-bit is enough
+        ldx fg_proc
+        beq @done               ; the shell has the keyboard already
+        lda #PS_PAUSED
+        sta proc_state,x
+        stz fg_proc
+        inx                     ; drop the console lock if it holds it, so the
+        inx                     ; shell can't wait forever on a paused process
+        cpx con_owner
+        bne @no_lock
+        stz con_owner
+        stz con_lock
+@no_lock:
+        lda #1
+        sta resched             ; it may be the running process: switch away
         rts
 
 ; ---------------------------------------------------------------------------
@@ -102,10 +125,14 @@ k_putc:
 
 ; ---------------------------------------------------------------------------
 ; K_GETC: carry set and A = character if one is waiting, else carry clear
-; and A = 0.
+; and A = 0. Only the foreground process receives input; any other caller
+; always gets carry clear.
 
 k_getc:
         SVC_ENTER
+        lda current_proc
+        cmp fg_proc
+        bne @not_fg             ; only the foreground process gets input
         php
         sei                     ; another process could be reading the ring too
         AXY8
@@ -127,6 +154,7 @@ k_getc:
         plp
         .a16
         .i16
+@not_fg:
         lda #$0000
         SVC_CLC
         SVC_EXIT
@@ -168,28 +196,33 @@ k_puts:
 
 ; ---------------------------------------------------------------------------
 ; K_CON_LOCK: take the console lock, yielding while someone else has it.
-; TSB sets the bit and tests its old value in one instruction, so no other
-; process can slip in between (README section 13).
+; TSB sets the bit and tests its old value in one instruction (README
+; section 13). Interrupts are off from the TSB until the owner is recorded,
+; so Ctrl-Z can never pause a process that holds the lock unrecorded.
 
 k_con_lock:
         SVC_ENTER
         pha
 @try:
+        php
+        sei
         A8
         lda #$01
         tsb con_lock
-        beq @got                ; it was clear: ours now
-        A16
-        cop $00                 ; held elsewhere: yield and try again
-        bra @try
-@got:
+        bne @held
         A16
         lda current_proc
         inc a
         inc a
         sta con_owner
+        plp
         pla
         SVC_EXIT
+@held:
+        A16
+        plp
+        cop $00                 ; held elsewhere: yield and try again
+        bra @try
 
 ; ---------------------------------------------------------------------------
 ; K_CON_UNLOCK: release the console lock if the caller holds it.
@@ -197,6 +230,8 @@ k_con_lock:
 k_con_unlock:
         SVC_ENTER
         pha
+        php
+        sei
         lda current_proc
         inc a
         inc a
@@ -208,5 +243,6 @@ k_con_unlock:
         trb con_lock
         A16
 @not_owner:
+        plp
         pla
         SVC_EXIT

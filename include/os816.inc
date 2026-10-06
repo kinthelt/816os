@@ -11,12 +11,17 @@
 K_PUTC        = $00FF00   ; A low byte = character. Waits for the transmitter.
 K_GETC        = $00FF03   ; Carry set: A = character (high byte 0).
                           ; Carry clear: nothing received, A = 0.
+                          ; Only the foreground process gets input; for any
+                          ; other process this always returns carry clear.
+                          ; Ctrl-Z never arrives: it pauses the foreground
+                          ; process and returns the keyboard to the shell.
 K_PUTS        = $00FF06   ; A = 16-bit address of a zero-terminated string
                           ; in the caller's data bank.
 K_YIELD       = $00FF09   ; Give the rest of this time slice to the next process.
 K_EXIT        = $00FF0C   ; End this process. Does not return. Returning from
                           ; the process's entry point with RTL does the same.
-K_GETPID      = $00FF0F   ; A = this process's slot number (0-6).
+                          ; If it had the keyboard, the shell gets it back.
+K_GETPID      = $00FF0F   ; A = this process's bank number (1-7).
 K_TICKS       = $00FF12   ; A = low 16 bits of the timer tick count.
 K_CON_LOCK    = $00FF15   ; Take the console lock, yielding while another process
                           ; holds it. Not recursive.

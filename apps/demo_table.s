@@ -1,10 +1,10 @@
-; demo_table.s - the programs built into the demo ROM, one entry per slot.
+; demo_table.s - the programs built into the demo ROM.
 ;
-; Each image is copied to its slot's bank at boot. Both ticker slots share
-; one copy of the image in ROM.
+; The shell's `run <name>` copies an image to $0000 of the first free bank
+; and starts it there. Names are lower case.
 
 .p816
-.export app_image, app_size
+.export app_count, app_names, app_image, app_size
 
 .segment "APPS"
 ticker:     .incbin "ticker.bin"
@@ -15,7 +15,11 @@ echo:       .incbin "echo.bin"
 echo_end:
 
 .segment "RODATA"
-;                  slot 0  slot 1  slot 2  slot 3  4  5  6
-app_image:  .word  ticker, ticker, leds,   echo,   0, 0, 0
-app_size:   .word  ticker_end - ticker, ticker_end - ticker
-            .word  leds_end - leds, echo_end - echo, 0, 0, 0
+app_count:  .word 3
+app_names:  .word n_ticker, n_leds, n_echo
+app_image:  .word ticker, leds, echo
+app_size:   .word ticker_end - ticker, leds_end - leds, echo_end - echo
+
+n_ticker:   .asciiz "ticker"
+n_leds:     .asciiz "leds"
+n_echo:     .asciiz "echo"

@@ -1,12 +1,12 @@
 ; torture.s - checks that preemption never disturbs a process's registers.
 ;
-; Loads distinctive values (different per slot) into A, B, X, Y, then checks
+; Loads distinctive values (different per bank) into A, B, X, Y, then checks
 ; them over and over while timer and ACIA interrupts switch processes
 ; underneath it. Also checks D, the data bank register, and that the 8-bit
 ; register widths survive. Any mismatch executes BRK, which the kernel
 ; records in brk_count.
 ;
-; After ITERATIONS rounds it prints "done <slot>" and exits.
+; After ITERATIONS rounds it prints "done <bank>" and exits.
 
 .p816
 .include "os816.inc"
@@ -39,7 +39,7 @@ start:
         tdc
         sta dpval
 
-        lda pid                 ; per-slot patterns
+        lda pid                 ; per-bank patterns
         xba
         ora pid                 ; pid * $0101
         eor #$A55A

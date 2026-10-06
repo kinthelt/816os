@@ -1,8 +1,8 @@
-; test_table.s - programs in the test ROM. Slot 6 is left empty so the
-; scheduler has a free slot to skip.
+; test_table.s - programs in the test ROM, started by the tests through
+; the shell's `run` command.
 
 .p816
-.export app_image, app_size
+.export app_count, app_names, app_image, app_size
 
 .segment "APPS"
 torture:    .incbin "torture.bin"
@@ -13,11 +13,18 @@ quitter:    .incbin "quitter.bin"
 quitter_end:
 crasher:    .incbin "crasher.bin"
 crasher_end:
-
-TORTURE_SIZE = torture_end - torture
+hog:        .incbin "hog.bin"
+hog_end:
 
 .segment "RODATA"
-;                  slot 0   slot 1   slot 2   slot 3  slot 4   slot 5   6
-app_image:  .word  torture, torture, torture, echoq,  quitter, crasher, 0
-app_size:   .word  TORTURE_SIZE, TORTURE_SIZE, TORTURE_SIZE
-            .word  echoq_end - echoq, quitter_end - quitter, crasher_end - crasher, 0
+app_count:  .word 5
+app_names:  .word n_torture, n_echoq, n_quitter, n_crasher, n_hog
+app_image:  .word torture, echoq, quitter, crasher, hog
+app_size:   .word torture_end - torture, echoq_end - echoq
+            .word quitter_end - quitter, crasher_end - crasher, hog_end - hog
+
+n_torture:  .asciiz "torture"
+n_echoq:    .asciiz "echoq"
+n_quitter:  .asciiz "quitter"
+n_crasher:  .asciiz "crasher"
+n_hog:      .asciiz "hog"

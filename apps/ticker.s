@@ -1,8 +1,8 @@
 ; ticker.s - prints a numbered line, sleeps, repeats.
 ;
-; The demo ROM loads this same image into two slots. Each copy runs in its
-; own bank with its own direct page, finds its slot number with K_GETPID,
-; and sleeps (slot + 1) * 100 ticks between lines.
+; Run it more than once and each copy runs from its own bank with its own
+; direct page. It finds its bank number with K_GETPID and sleeps
+; bank * 100 ticks between lines.
 
 .p816
 .include "os816.inc"
@@ -39,7 +39,6 @@ start:
 
         inc count
         lda pid
-        inc a
         jsr mul100
         jsr sleep
         bra @loop

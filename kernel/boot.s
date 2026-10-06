@@ -1,4 +1,4 @@
-; boot.s - reset, hardware setup, loading the built-in programs (README section 9)
+; boot.s - reset, hardware setup, starting the shell (README section 9)
 
 .p816
 .include "hw.inc"
@@ -6,8 +6,7 @@
 .include "macros.inc"
 .include "kvars.inc"
 
-.import acia_init, create_process
-.import app_image, app_size     ; per-slot program table, from the ROM's app table
+.import acia_init, start_shell
 
 .export reset, idle
 
@@ -33,15 +32,22 @@ reset:                          ; the CPU starts in emulation mode
         dex
         bpl @clear
 
+        A8                      ; the copy stub used to load programs:
+        lda #$54                ; MVN (operands: destination bank, source bank)
+        sta mvn_stub
+        lda #$60                ; RTS
+        sta mvn_stub+3
+        A16
+
         jsr acia_init
         jsr via_init
-        jsr load_apps
+        jsr start_shell         ; the only process at boot
 
         lda #IDLE_SLOT * 2      ; boot carries on as the idle process
         sta current_proc
         jsr timer_start
         cli
-        cop $00                 ; yield: save idle's frame, start the first process
+        cop $00                 ; yield: save idle's frame, start the shell
 
 ; Runs only when no process is ready. Its context lives on the kernel stack.
 idle:
@@ -80,53 +86,4 @@ timer_start:
         lda #$80 | VIA_INT_T1
         sta VIA_IER
         A16
-        rts
-
-; ---------------------------------------------------------------------------
-; load_apps: copy each slot's program image from ROM to APP_LOAD in the
-; slot's bank, then create the process.
-;
-; MVN's banks are part of the instruction, so the copy runs from a
-; three-byte stub in RAM with the destination bank patched in.
-
-load_apps:
-        A8
-        lda #$54                ; MVN (operands: destination bank, source bank)
-        sta mvn_stub
-        stz mvn_stub+2          ; source bank 0: images are in ROM
-        lda #$60                ; RTS
-        sta mvn_stub+3
-        A16
-
-        ldx #$0000              ; slot * 2
-@slot:
-        lda app_size,x
-        beq @next               ; nothing for this slot
-
-        A8
-        txa
-        lsr a
-        inc a                   ; slot n lives in bank n + 1
-        sta mvn_stub+1
-        A16
-
-        phx
-        lda app_image,x
-        pha
-        lda app_size,x
-        dec a                   ; MVN copies A + 1 bytes
-        plx                     ; X = source address
-        ldy #APP_LOAD           ; Y = destination address
-        phb                     ; MVN leaves the data bank at the destination
-        jsr mvn_stub
-        plb
-        plx
-
-        lda #APP_LOAD
-        jsr create_process
-@next:
-        inx
-        inx
-        cpx #NUM_PROCS * 2
-        bcc @slot
         rts

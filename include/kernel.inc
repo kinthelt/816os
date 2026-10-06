@@ -1,15 +1,29 @@
 ; kernel.inc - kernel-internal constants and service frame macros
 
-NUM_PROCS   = 7             ; process slots 0-6, in banks 1-7
-IDLE_SLOT   = 7             ; pseudo-process that runs when nothing else can
+; Process slots are numbered by bank. Slot 0 is the shell, which runs from
+; ROM in bank 0. Slots 1-7 are programs in banks 1-7. Tables indexed by
+; slot use slot * 2.
+NUM_PROCS   = 8             ; slots the scheduler round-robins over: 0-7
+SHELL_SLOT  = 0
+IDLE_SLOT   = 8             ; pseudo-process that runs when nothing else can
 NUM_SLOTS   = NUM_PROCS + 1 ; table entries, including idle
 
 PS_FREE     = 0
 PS_READY    = 1
+PS_PAUSED   = 2             ; stopped with Ctrl-Z; not scheduled until fg or bg
 
+KEY_PAUSE   = $1A           ; Ctrl-Z: pause the foreground program
+
+; Bank 0 layout (README section 5)
+DP_BASE     = $0200         ; direct page of slot n: DP_BASE + n * $100
+LINE_BUF    = $0A00         ; shell input line, 128 bytes
+STACK_BASE  = $0B00         ; stack of slot n: STACK_BASE + n * STACK_SIZE ...
+STACK_SIZE  = $0800         ; ... up to the next one, minus 1. Ends at $4AFF.
 KSTACK_TOP  = $5FFF         ; kernel stack: boot, then the idle loop
 RX_BUF      = $5D00         ; 256-byte ACIA receive ring
 APP_LOAD    = $0000         ; where a program image is loaded in its bank
+
+SHELL_STACK_TOP = STACK_BASE + STACK_SIZE - 1
 
 ; 5 ms at 6 MHz. Timer 1's free-run period is a couple of cycles longer than
 ; the latch value (README section 10).

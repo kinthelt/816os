@@ -20,8 +20,9 @@ Run a ROM interactively:
 
     python3 tools/sim816.py build/816os.bin
 
-Keys you type go to the ACIA's receiver; what it sends is printed. Ctrl-C
-quits. The simulator runs slower than the real 6 MHz machine.
+Keys you type go to the ACIA's receiver, including Ctrl-C and Ctrl-Z; what
+it sends is printed. Ctrl-] quits. The simulator runs slower than the real
+6 MHz machine.
 """
 
 import argparse
@@ -1290,6 +1291,9 @@ def load_machine(rom_path):
 # ---------------------------------------------------------------------------
 # Interactive use
 
+QUIT_KEY = b'\x1d'   # Ctrl-]
+
+
 def interactive(m, show_leds):
     import select
     import termios
@@ -1300,6 +1304,9 @@ def interactive(m, show_leds):
     old = termios.tcgetattr(fd) if is_tty else None
     if is_tty:
         tty.setcbreak(fd)
+        attrs = termios.tcgetattr(fd)
+        attrs[3] &= ~termios.ISIG          # pass Ctrl-C and Ctrl-Z to the ACIA
+        termios.tcsetattr(fd, termios.TCSADRAIN, attrs)
     sent = 0
     leds_seen = 0
     try:
@@ -1319,7 +1326,7 @@ def interactive(m, show_leds):
             r, _, _ = select.select([fd], [], [], 0)
             if r:
                 data = os.read(fd, 64)
-                if not data:
+                if not data or QUIT_KEY in data:
                     break
                 m.acia.send(data.replace(b'\n', b'\r'))
     except KeyboardInterrupt:
@@ -1333,12 +1340,17 @@ def interactive(m, show_leds):
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split('\n\n')[0])
     ap.add_argument('rom', help='32 KB ROM image for $8000-$FFFF')
+    ap.add_argument('--type', metavar='TEXT',
+                    help='with --seconds: type this at the start (\\r for Return)')
     ap.add_argument('--leds', action='store_true', help='print port B changes')
     ap.add_argument('--seconds', type=float,
                     help='run this many simulated seconds, print output, exit')
     args = ap.parse_args()
     m = load_machine(args.rom)
     if args.seconds is not None:
+        if args.type:
+            m.run(CPU_HZ // 20)
+            m.acia.send(args.type.encode().decode('unicode_escape').encode('latin-1'))
         m.run(int(args.seconds * CPU_HZ))
         sys.stdout.write(m.acia.output.decode('latin-1').replace('\r', ''))
         if args.leds:
