@@ -48,4 +48,6 @@ ACIA_CTRL_VALUE = %00010000
 ; Command: no parity, no echo, RTS low with transmit interrupts off,
 ; receive interrupts on, DTR low (receiver enabled). Bits 7-6 only matter
 ; when parity is enabled (bit 5); $89 matches be6502's ACIA_SETUP.
+; The kernel never changes it after boot: no RTS flow control (README
+; section 0), because raising RTS on the 6551 also turns the transmitter off.
 ACIA_CMD_VALUE  = %10001001

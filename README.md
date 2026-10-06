@@ -37,9 +37,10 @@ make run        # run the demo ROM in the simulator; typed keys go to the ACIA
 
 **Matches be6502** (`rom/bios.s`, `pld/decode.pld`): the memory map and I/O slots, the ACIA's control (`$10`) and command (`$89`) values, and the timer 2 transmit delay (`TX_CYCLES`' formula, 572 cycles at 6 MHz). The simulator uses the GAL's decode.
 
+**No receive flow control, unlike the BIOS.** The kernel writes the ACIA command register once at boot and never changes it, so RTS stays asserted. The BIOS stops the sender by writing `$01`, but on the 6551 family that also turns the transmitter off, which would stall every process printing to the console, and making output wait for it can deadlock (a process stuck printing never reads the input that would let the sender resume). XMODEM sends 133-byte blocks and waits for each acknowledgement, so it fits in the 256-byte ring without flow control. A long paste while no process reads will lose characters: the receive interrupt drops bytes once the ring is full. Revisit once processes can block waiting for input.
+
 **Still to check or decide before burning a ROM:**
 
-- **Receive flow control.** The BIOS drops RTS (command `$01`) when its buffer is nearly full and raises it again in `CHRIN`. The kernel doesn't do this yet, so a sender that keeps going while no process reads will overflow the ring. On the 6551 family, the command value that raises RTS also turns the transmitter off, which matters once several processes share the console.
 - **VIA IRQ wiring** (section 11): the chip variant decides how its IRQ output can share the line with the ACIA.
 - **Port A** is left untouched. Port B is set to all outputs for the LEDs.
 
@@ -438,6 +439,7 @@ Programs currently run in bank 1 in emulation mode, and ACIA receive is interrup
 | Handler switches to the kernel stack after saving registers | Optional. Isolates handler stack use from process stacks, at a few cycles per interrupt |
 | Blocking | Later phase. The idle loop is built (section 0); processes still wait by yielding in a loop |
 | Yield call | Built, as `COP` (section 0). `K_CON_LOCK` yields while it waits |
+| Receive flow control | Off (section 0). Revisit with blocking input |
 | VIA IRQ wiring | Check the chip variant and the wiring (section 11) |
 
 ## 19. References
