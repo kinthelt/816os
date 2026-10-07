@@ -1,10 +1,71 @@
 # 816os: Preemptive Multitasking OS for the 65C816 Breadboard Computer
 
-Design draft. Nothing here has been built or tested yet.
+Design document, plus a first kernel that implements it. The kernel passes its tests in a simulator (`tools/sim816.py`) but has not run on the hardware yet. See section 0 for what's built and what to check before burning a ROM.
+
+## 0. Status and building
+
+Needs the cc65 toolchain (`ca65`, `ld65`) and Python 3 for the simulator and tests.
+
+```
+make            # build/816os.bin: 32 KB ROM image for $8000-$FFFF
+make test       # build the test ROM, run the simulator tests
+make run        # run the demo ROM in the simulator; typed keys go to the ACIA, Ctrl-] quits
+```
+
+**Using it:** the machine boots to a shell prompt (`> `). Nothing else runs until you start it.
+
+```
+> run ticker          start a program from ROM in the first free bank, in the foreground
+[1] ticker
+ticker 1: 0000
+^Z                    Ctrl-Z pauses the foreground program and returns to the shell
+[1] ticker paused
+> bg 1                resume it in the background (fg 1 would resume it in the foreground)
+> ps                  list processes, by bank
+> kill 1              end it; kill 0 restarts the shell
+> 21000: a9 00        Wozmon-style store, examine (21000) and block examine (21000.2100f)
+> help                commands and the programs in ROM
+```
+
+Input is case-insensitive. ESC cancels a line, or stops a long examine. Only the foreground process receives keyboard input.
+
+**What's built:** boot into native mode, the per-process direct pages and stacks (section 5), the 13-byte context frame and timer-driven round-robin scheduler (sections 6-8 and 10), interrupt-driven ACIA receive, paced transmit, the console lock (section 13), and a JSL jump table of kernel services. Beyond the design above:
+
+- **Processes are numbered by bank.** Slot 0 is the shell, running from ROM in bank 0; slots 1-7 are programs in banks 1-7. Each slot is free, ready or paused, and the scheduler only picks ready ones.
+- **The shell is part of the kernel** (`kernel/shell.s`), scheduled like any process. If it is killed or hits `BRK`, the kernel starts a fresh one. Its memory commands follow be6502's `rom/wozmon.s` (24-bit addresses), without Wozmon's run and XMODEM commands. It checks a whole line before running it, so a mistyped command does nothing rather than half-running as hex. Nothing stops you examining or storing anywhere, including the kernel's memory and the I/O window; reading `$7000`, `$7001`, `$6004` or `$6008` changes the ACIA's or VIA's state and can stall the kernel.
+- **Foreground and Ctrl-Z.** One process at a time gets keyboard input. The receive interrupt catches Ctrl-Z itself: it pauses the foreground process, drops the console lock if that process held it, and gives the keyboard back to the shell.
+- **Idle process.** After boot, the boot code becomes the idle loop (`WAI`) on the kernel stack, in a pseudo-slot 8 that only runs when no process is ready. While the shell is waiting for input it polls and yields, so idle rarely runs yet; blocking input would fix that.
+- **Yield is `COP`.** `COP` pushes the same frame as an interrupt, so the yield handler shares the switch code. The next process gets the rest of the current slice; timer 1 is not restarted, so ticks stay evenly spaced.
+- **Exit.** `K_EXIT`, or `RTL` from a process's entry point, frees its slot. `BRK` in a process kills it and records the slot and address. Either way, the kernel releases the console lock if the process held it.
+- **Programs are loaded from ROM on demand.** Each image is linked at $0000 (`cfg/app.cfg`). `run` copies it with `MVN` into $0000 of the first free bank. Running a program twice gives two copies in two banks.
+
+**Layout:**
+
+| Path | Contents |
+|---|---|
+| `include/os816.inc` | Kernel service addresses and calling rules, for programs |
+| `include/hw.inc` | VIA and ACIA addresses and settings |
+| `kernel/` | Boot, scheduler and interrupt handlers, console driver, shell, jump table, vectors |
+| `apps/` | Demo programs (`ticker`, `leds`, `echo`) and the demo ROM's program table |
+| `tests/` | Simulator tests and the test ROM's programs |
+| `tools/sim816.py` | 65C816 + W65C22 + W65C51N simulator |
+
+**Kernel services:** call with `JSL` to the fixed addresses in `include/os816.inc`: `K_PUTC`, `K_GETC`, `K_PUTS`, `K_YIELD`, `K_EXIT`, `K_GETPID`, `K_TICKS`, `K_CON_LOCK`, `K_CON_UNLOCK`. They keep the caller's register widths, X, Y, D and data bank register. A service that may be preempted keeps its working state on the caller's stack (`K_PUTS` points D at its stack frame), so two processes can be inside the same service at once.
+
+**The simulator** models the CPU, the VIA timers and port B, and the ACIA. It includes the W65C51N's stuck transmit-empty bit and counts receive overruns and characters sent too close together. Cycle counts are approximate, so timings are close to the hardware's but not exact. The tests drive the machine through the shell, as a person at the terminal would. They cover register preservation under preemption (a torture program checks A, B, X, Y, D, the data bank register and register widths while timer and ACIA interrupts switch processes), running one image in several banks, Ctrl-Z, `fg`, `bg` and `kill`, foreground-only input, exit, BRK recovery with the console lock held, restarting the shell, memory examine and store, line editing, and 200-character receive bursts with no overruns.
+
+**Matches be6502** (`rom/bios.s`, `pld/decode.pld`): the memory map and I/O slots, the ACIA's control (`$10`) and command (`$89`) values, and the timer 2 transmit delay (`TX_CYCLES`' formula, 572 cycles at 6 MHz). The simulator uses the GAL's decode.
+
+**No receive flow control, unlike the BIOS.** The kernel writes the ACIA command register once at boot and never changes it, so RTS stays asserted. The BIOS stops the sender by writing `$01`, but on the 6551 family that also turns the transmitter off, which would stall every process printing to the console, and making output wait for it can deadlock (a process stuck printing never reads the input that would let the sender resume). XMODEM sends 133-byte blocks and waits for each acknowledgement, so it fits in the 256-byte ring without flow control. A long paste while no process reads will lose characters: the receive interrupt drops bytes once the ring is full. Revisit once processes can block waiting for input.
+
+**Still to check or decide before burning a ROM:**
+
+- **VIA IRQ wiring** (section 11): the chip variant decides how its IRQ output can share the line with the ACIA.
+- **Port A** is left untouched. Port B is set to all outputs for the LEDs.
 
 ## 1. Summary
 
-- One process per RAM bank (banks $01–$07), so up to seven processes.
+- One process per RAM bank (banks $01–$07), so up to seven processes, plus the shell, which runs from ROM as the process in bank 0.
 - No memory protection. Processes stay in their own bank by convention.
 - VIA timer 1 fires a periodic interrupt. On each tick, the interrupt handler saves the running process's registers on that process's own stack, then resumes the next process.
 - Nothing is copied on a context switch. Each process has its own direct page and its own stack in bank 0, permanently. Switching processes is just switching the stack pointer.
@@ -51,30 +112,32 @@ These rules are what make one binary loadable into any of banks 1–7 without re
 |---|---|---|
 | $0000–$00FF | 256 B | Kernel direct page (includes ACIA buffer head and tail pointers) |
 | $0100–$01FF | 256 B | Kernel variables and process table |
-| $0200–$08FF | 7 × 256 B | Process direct pages: slot *n* at $0200 + *n* × $100 |
-| $0900–$5CFF | 7 × 3 KB | Process stacks: slot *n* occupies $0900 + *n* × $0C00 up to $0900 + (*n*+1) × $0C00 − 1 |
+| $0200–$09FF | 8 × 256 B | Direct pages: bank *n*'s process at $0200 + *n* × $100 (bank 0 is the shell) |
+| $0A00–$0AFF | 256 B | Shell input line |
+| $0B00–$4AFF | 8 × 2 KB | Stacks: bank *n*'s process occupies $0B00 + *n* × $0800 up to $0B00 + (*n*+1) × $0800 − 1 |
+| $4B00–$5CFF | 8.5 KB | Free |
 | $5D00–$5DFF | 256 B | ACIA receive buffer |
-| $5E00–$5FFF | 512 B | Kernel stack (top at $5FFF) |
+| $5E00–$5FFF | 512 B | Kernel stack (top at $5FFF): boot, then the idle loop |
 
 Totals exactly 24 KB.
 
 Every direct page is page-aligned. The datasheet notes direct addressing takes an extra cycle when the low byte of D isn't zero (section 3.5.17).
 
-Two assumptions to confirm:
-- **ACIA buffer at $5D00.** This assumes the buffer moves here. If it lives somewhere else now, either move it or adjust this map.
+- **ACIA buffer at $5D00.** The BIOS keeps its buffer at $0300 (`INPUT_BUFFER` in `rom/bios.cfg`), which is bank 1's direct page here. That's fine while 816os is its own ROM image. If the BIOS and the OS ever share a ROM, the BIOS buffer has to move.
 - **Kernel stack shrunk from 768 to 512 bytes** to fit the ACIA buffer. Boot, idle, and handler work should need well under 256 bytes.
 
 Process slot table (constants in ROM):
 
 | Slot | Bank | Direct page | Initial stack top |
 |---|---|---|---|
-| 0 | $01 | $0200 | $14FF |
-| 1 | $02 | $0300 | $20FF |
-| 2 | $03 | $0400 | $2CFF |
-| 3 | $04 | $0500 | $38FF |
-| 4 | $05 | $0600 | $44FF |
-| 5 | $06 | $0700 | $50FF |
-| 6 | $07 | $0800 | $5CFF |
+| 0 (shell) | $00 | $0200 | $12FF |
+| 1 | $01 | $0300 | $1AFF |
+| 2 | $02 | $0400 | $22FF |
+| 3 | $03 | $0500 | $2AFF |
+| 4 | $04 | $0600 | $32FF |
+| 5 | $05 | $0700 | $3AFF |
+| 6 | $06 | $0800 | $42FF |
+| 7 | $07 | $0900 | $4AFF |
 
 ## 6. The saved context frame
 
@@ -390,13 +453,16 @@ Programs currently run in bank 1 in emulation mode, and ACIA receive is interrup
 
 | Decision | Current leaning |
 |---|---|
-| Time slice length | Start at 5 ms, tune for console responsiveness |
+| Time slice length | 5 ms (`SLICE_COUNT` in `include/kernel.inc`); tune for console responsiveness |
 | IPC model | Undecided (section 14) |
 | Emulation guest exit behavior | Undecided (section 15) |
-| ACIA buffer location | Proposed $5D00 (section 5); confirm |
+| ACIA buffer location | $5D00 in the 816os ROM; the BIOS's is at $0300 (section 5) |
 | Handler switches to the kernel stack after saving registers | Optional. Isolates handler stack use from process stacks, at a few cycles per interrupt |
-| Blocking and an idle loop | Later phase. Idle can run on the kernel stack with `WAI` (wait for interrupt), registered as a pseudo-process in the table so the handler can save and resume it |
-| Yield call | Later phase. Lets a process give up its slice, for example while waiting on a lock |
+| Blocking | Later phase. The idle loop is built (section 0); processes still wait by yielding in a loop |
+| Yield call | Built, as `COP` (section 0). `K_CON_LOCK` yields while it waits |
+| Receive flow control | Off (section 0). Revisit with blocking input |
+| Shell | Built into the kernel as the process in bank 0 (section 0) |
+| Loading new programs | Later. An XMODEM receive in the kernel, so the shell can load a program into a bank |
 | VIA IRQ wiring | Check the chip variant and the wiring (section 11) |
 
 ## 19. References
