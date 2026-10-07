@@ -24,16 +24,20 @@ ticker 1: 0000
 > ps                  list processes, by bank
 > kill 1              end it; kill 0 restarts the shell
 > 21000: a9 00        Wozmon-style store, examine (21000) and block examine (21000.2100f)
+> load 21000          receive a file with XMODEM/CRC into memory from $02:1000
+> save 21000.213ff    send $02:1000-$02:13FF with XMODEM/CRC
 > help                commands and the programs in ROM
 ```
 
-Input is case-insensitive. ESC cancels a line, or stops a long examine. Only the foreground process receives keyboard input.
+Input is case-insensitive. ESC cancels a line, or stops a long examine, or aborts a transfer. Only the foreground process receives keyboard input.
 
 **What's built:** boot into native mode, the per-process direct pages and stacks (section 5), the 13-byte context frame and timer-driven round-robin scheduler (sections 6-8 and 10), interrupt-driven ACIA receive, paced transmit, the console lock (section 13), and a JSL jump table of kernel services. Beyond the design above:
 
 - **Processes are numbered by bank.** Slot 0 is the shell, running from ROM in bank 0; slots 1-7 are programs in banks 1-7. Each slot is free, ready or paused, and the scheduler only picks ready ones.
 - **The shell is part of the kernel** (`kernel/shell.s`), scheduled like any process. If it is killed or hits `BRK`, the kernel starts a fresh one. Its memory commands follow be6502's `rom/wozmon.s` (24-bit addresses), without Wozmon's run and XMODEM commands. It checks a whole line before running it, so a mistyped command does nothing rather than half-running as hex. Nothing stops you examining or storing anywhere, including the kernel's memory and the I/O window; reading `$7000`, `$7001`, `$6004` or `$6008` changes the ACIA's or VIA's state and can stall the kernel.
 - **Foreground and Ctrl-Z.** One process at a time gets keyboard input. The receive interrupt catches Ctrl-Z itself: it pauses the foreground process, drops the console lock if that process held it, and gives the keyboard back to the shell.
+- **XMODEM save and load** (`kernel/xmodem.s`), ported from be6502's `rom/xmodem.s` with the protocol handling unchanged: CRC only, 24-bit addresses across bank boundaries, raw memory images in whole 128-byte blocks (a load can write up to 127 bytes of padding past the end of the file). Timeouts count the kernel's timer ticks instead of a timed loop, and the shell yields while it waits, so other processes keep running. For the whole transfer the shell holds the console lock and turns off Ctrl-Z, so a `$1A` byte in a file is just data.
+- **Output waits for the console lock.** While one process holds the lock, `K_PUTC` and `K_PUTS` from any other process wait, even if that process never takes the lock itself. Nothing else can print in the middle of a locked line or a transfer.
 - **Idle process.** After boot, the boot code becomes the idle loop (`WAI`) on the kernel stack, in a pseudo-slot 8 that only runs when no process is ready. While the shell is waiting for input it polls and yields, so idle rarely runs yet; blocking input would fix that.
 - **Yield is `COP`.** `COP` pushes the same frame as an interrupt, so the yield handler shares the switch code. The next process gets the rest of the current slice; timer 1 is not restarted, so ticks stay evenly spaced.
 - **Exit.** `K_EXIT`, or `RTL` from a process's entry point, frees its slot. `BRK` in a process kills it and records the slot and address. Either way, the kernel releases the console lock if the process held it.
@@ -52,7 +56,7 @@ Input is case-insensitive. ESC cancels a line, or stops a long examine. Only the
 
 **Kernel services:** call with `JSL` to the fixed addresses in `include/os816.inc`: `K_PUTC`, `K_GETC`, `K_PUTS`, `K_YIELD`, `K_EXIT`, `K_GETPID`, `K_TICKS`, `K_CON_LOCK`, `K_CON_UNLOCK`. They keep the caller's register widths, X, Y, D and data bank register. A service that may be preempted keeps its working state on the caller's stack (`K_PUTS` points D at its stack frame), so two processes can be inside the same service at once.
 
-**The simulator** models the CPU, the VIA timers and port B, and the ACIA. It includes the W65C51N's stuck transmit-empty bit and counts receive overruns and characters sent too close together. Cycle counts are approximate, so timings are close to the hardware's but not exact. The tests drive the machine through the shell, as a person at the terminal would. They cover register preservation under preemption (a torture program checks A, B, X, Y, D, the data bank register and register widths while timer and ACIA interrupts switch processes), running one image in several banks, Ctrl-Z, `fg`, `bg` and `kill`, foreground-only input, exit, BRK recovery with the console lock held, restarting the shell, memory examine and store, line editing, and 200-character receive bursts with no overruns.
+**The simulator** models the CPU, the VIA timers and port B, and the ACIA. It includes the W65C51N's stuck transmit-empty bit and counts receive overruns and characters sent too close together. Cycle counts are approximate, so timings are close to the hardware's but not exact. The tests drive the machine through the shell, as a person at the terminal would. They cover register preservation under preemption (a torture program checks A, B, X, Y, D, the data bank register and register widths while timer and ACIA interrupts switch processes), running one image in several banks, Ctrl-Z, `fg`, `bg` and `kill`, foreground-only input, exit, BRK recovery with the console lock held, restarting the shell, memory examine and store, line editing, and 200-character receive bursts with no overruns. An XMODEM/CRC peer written in Python stands in for the terminal program to test `save` and `load`: every byte value, bank boundaries, damaged and resent blocks, cancelling from either end, and a background process printing throughout.
 
 **Matches be6502** (`rom/bios.s`, `pld/decode.pld`): the memory map and I/O slots, the ACIA's control (`$10`) and command (`$89`) values, and the timer 2 transmit delay (`TX_CYCLES`' formula, 572 cycles at 6 MHz). The simulator uses the GAL's decode.
 
@@ -115,7 +119,8 @@ These rules are what make one binary loadable into any of banks 1–7 without re
 | $0200–$09FF | 8 × 256 B | Direct pages: bank *n*'s process at $0200 + *n* × $100 (bank 0 is the shell) |
 | $0A00–$0AFF | 256 B | Shell input line |
 | $0B00–$4AFF | 8 × 2 KB | Stacks: bank *n*'s process occupies $0B00 + *n* × $0800 up to $0B00 + (*n*+1) × $0800 − 1 |
-| $4B00–$5CFF | 8.5 KB | Free |
+| $4B00–$4B83 | 132 B | XMODEM block buffer |
+| $4B84–$5CFF | ~8.4 KB | Free |
 | $5D00–$5DFF | 256 B | ACIA receive buffer |
 | $5E00–$5FFF | 512 B | Kernel stack (top at $5FFF): boot, then the idle loop |
 
@@ -462,7 +467,8 @@ Programs currently run in bank 1 in emulation mode, and ACIA receive is interrup
 | Yield call | Built, as `COP` (section 0). `K_CON_LOCK` yields while it waits |
 | Receive flow control | Off (section 0). Revisit with blocking input |
 | Shell | Built into the kernel as the process in bank 0 (section 0) |
-| Loading new programs | Later. An XMODEM receive in the kernel, so the shell can load a program into a bank |
+| Loading new programs | `load` puts a file anywhere in memory (section 0). Starting loaded code as a process is still to do |
+| Filesystem | Later. Files are raw memory images sent over XMODEM |
 | VIA IRQ wiring | Check the chip variant and the wiring (section 11) |
 
 ## 19. References

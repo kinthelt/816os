@@ -20,6 +20,7 @@ LINE_BUF    = $0A00         ; shell input line, 128 bytes
 STACK_BASE  = $0B00         ; stack of slot n: STACK_BASE + n * STACK_SIZE ...
 STACK_SIZE  = $0800         ; ... up to the next one, minus 1. Ends at $4AFF.
 KSTACK_TOP  = $5FFF         ; kernel stack: boot, then the idle loop
+XM_BUF      = $4B00         ; XMODEM block buffer, 132 bytes
 RX_BUF      = $5D00         ; 256-byte ACIA receive ring
 APP_LOAD    = $0000         ; where a program image is loaded in its bank
 

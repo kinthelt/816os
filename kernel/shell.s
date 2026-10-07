@@ -37,6 +37,8 @@
 .include "os816.inc"
 
 .import create_process, release_slot
+.import XModemSend, XModemRcv
+.importzp xm_ptr, xm_count
 .import app_count, app_names, app_image, app_size
 
 .export shell_main, shell_name
@@ -287,6 +289,8 @@ cmd_table:
         .word str_fg,   cmd_fg - 1
         .word str_bg,   cmd_bg - 1
         .word str_kill, cmd_kill - 1
+        .word str_save, cmd_save - 1
+        .word str_load, cmd_load - 1
         .word str_help, cmd_help - 1
 cmd_table_end:
 
@@ -524,6 +528,124 @@ no_such:
         LOCK
         PRINT msg_no_such
         UNLOCK
+        sec
+        rts
+
+; ---------------------------------------------------------------------------
+; save <start>.<end>, load <addr>: XMODEM/CRC transfers (kernel/xmodem.s).
+; Addresses are up to six hex digits, bank first, as in the memory
+; commands. Files are raw memory images in whole 128-byte blocks.
+
+cmd_save:
+        jsr parse_hex24         ; start
+        bcs xfer_usage
+        lda L
+        sta xm_ptr
+        lda H
+        sta xm_ptr+1
+        lda BK
+        sta xm_ptr+2
+        lda IN,x
+        cmp #'.'
+        bne xfer_usage
+        inx
+        jsr parse_hex24         ; end
+        bcs xfer_usage
+        jsr end_of_line
+        bne xfer_usage
+        sec                     ; count = end - start + 1
+        lda L
+        sbc xm_ptr
+        sta xm_count
+        lda H
+        sbc xm_ptr+1
+        sta xm_count+1
+        lda BK
+        sbc xm_ptr+2
+        sta xm_count+2
+        bcc xfer_usage          ; end before start
+        inc xm_count
+        bne @send
+        inc xm_count+1
+        bne @send
+        inc xm_count+2
+@send:
+        jsr begin_xfer
+        jsr XModemSend
+        jmp end_xfer
+
+cmd_load:
+        jsr parse_hex24
+        bcs xfer_usage
+        jsr end_of_line
+        bne xfer_usage
+        lda L
+        sta xm_ptr
+        lda H
+        sta xm_ptr+1
+        lda BK
+        sta xm_ptr+2
+        jsr begin_xfer
+        jsr XModemRcv
+        jmp end_xfer
+
+xfer_usage:
+        LOCK
+        PRINT msg_xfer_usage
+        UNLOCK
+        rts
+
+; The transfer owns the console: no other process's output can get into
+; the stream, and Ctrl-Z ($1A) is just another byte until it's over.
+begin_xfer:
+        LOCK
+        lda #1
+        sta rx_raw
+        rts
+
+end_xfer:
+        stz rx_raw
+        UNLOCK
+        rts
+
+; end_of_line: skip spaces at IN,X; Z set if the line ends there.
+end_of_line:
+        jsr skip_spaces
+        lda IN,x
+        cmp #KEY_CR
+        rts
+
+; parse_hex24: hex digits at IN,X into L, H, BK. X ends just past them.
+; Carry set if there were none.
+parse_hex24:
+        stz L
+        stz H
+        stz BK
+        stx YSAV
+@digit:
+        lda IN,x
+        jsr hex_value
+        bcs @end
+        asl a                   ; digit to the high nibble
+        asl a
+        asl a
+        asl a
+        ldy #4
+@rotate:
+        asl a
+        rol L
+        rol H
+        rol BK
+        dey
+        bne @rotate
+        inx
+        bra @digit
+@end:
+        cpx YSAV
+        beq @none
+        clc
+        rts
+@none:
         sec
         rts
 
@@ -803,6 +925,8 @@ str_fg:         .asciiz "fg"
 str_bg:         .asciiz "bg"
 str_kill:       .asciiz "kill"
 str_help:       .asciiz "help"
+str_save:       .asciiz "save"
+str_load:       .asciiz "load"
 
 msg_banner:     .byte 13, 10, "816os", 13, 10, 0
 msg_prompt:     .asciiz "> "
@@ -811,6 +935,7 @@ msg_rubout:     .byte KEY_BS, ' ', KEY_BS, 0
 msg_cancel:     .byte "\", 13, 10, 0
 msg_what:       .byte "?", 13, 10, 0
 msg_usage:      .byte "usage: fg|bg|kill <bank 0-7>", 13, 10, 0
+msg_xfer_usage: .byte "usage: save <start>.<end> or load <address>", 13, 10, 0
 msg_no_such:    .byte "no such process", 13, 10, 0
 msg_no_program: .byte "no such program; try help", 13, 10, 0
 msg_no_bank:    .byte "no free bank", 13, 10, 0
@@ -829,6 +954,8 @@ msg_help:
         .byte "fg <bank>     resume a process in the foreground", 13, 10
         .byte "bg <bank>     resume a paused process in the background", 13, 10
         .byte "kill <bank>   end a process (kill 0 restarts the shell)", 13, 10
+        .byte "save <a>.<b>  send memory a-b with XMODEM (e.g. save 21000.213ff)", 13, 10
+        .byte "load <a>      receive a file with XMODEM into memory at a", 13, 10
         .byte "help          this list", 13, 10
         .byte "21000         examine $02:1000", 13, 10
         .byte "21000.2100f   examine $02:1000-$02:100F", 13, 10
