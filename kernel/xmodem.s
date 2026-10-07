@@ -1,4 +1,4 @@
-; xmodem.s - XMODEM/CRC send and receive, for the shell's save and load
+; xmodem.s - the K_LOAD and K_SAVE services: XMODEM/CRC over the console
 ;
 ; Ported from be6502's rom/xmodem.s, which is based on Daryl Rictor's
 ; XMODEM/CRC sender/receiver for the 65C02 (August 2002). The protocol
@@ -18,12 +18,17 @@
 ;
 ; What changed for 816os:
 ;
-;   - It runs in the shell (process 0): 8-bit registers, the shell's direct
-;     page, data bank 0. Characters go through K_GETC and K_PUTC.
+;   - The routines run as kernel services, called with JSL by any process,
+;     like the BIOS's XLOAD and XSAVE. They have their own direct page and
+;     block buffer in bank 0 (XM_DP, XM_BUF). The console lock makes sure
+;     only one transfer runs at a time.
+;   - Only the foreground process may transfer, since it is the one that
+;     receives the console's input. Anyone else gets carry clear at once.
+;   - Characters go through K_GETC and K_PUTC.
 ;   - Timeouts count the kernel's 200 Hz timer ticks instead of a timed
 ;     polling loop, which preemption would throw off. While waiting for a
-;     character it yields, so other processes keep running.
-;   - The caller holds the console lock for the whole transfer, so no other
+;     character the caller yields, so other processes keep running.
+;   - For the whole transfer the service holds the console lock, so no other
 ;     output can land in the middle of it, and turns on raw receive so that
 ;     a $1A byte isn't taken as Ctrl-Z.
 
@@ -34,11 +39,10 @@
 .include "kvars.inc"
 .include "os816.inc"
 
-.export XModemSend, XModemRcv
-.exportzp xm_ptr, xm_count
+.export k_load, k_save
 
-; Direct page variables, in the shell's direct page (same offsets as
-; be6502, clear of the shell's own variables).
+; Direct page variables, in XMODEM's own direct page, XM_DP (same offsets
+; as be6502).
 blkno           = $36           ; block number
 errcnt          = $37           ; error counter, 10 is the limit
 crc             = $38           ; CRC (two bytes)
@@ -51,9 +55,7 @@ counth          = $3E
 countb          = $3F
 retry2          = $42           ; timeout, in tenths of a second
 deadline        = $43           ; tick count at which GetByte gives up (2 bytes)
-
-xm_ptr          = ptr           ; for the shell to fill in
-xm_count        = count
+locked          = $45           ; nonzero if this transfer took the console lock
 
 Rbuff           = XM_BUF        ; <blk #> <~blk #> <128 bytes> <CRCH> <CRCL>
 
@@ -76,6 +78,136 @@ ESC             = $1B
 .endmacro
 
 .segment "CODE"
+
+; ---------------------------------------------------------------------------
+; K_LOAD: receive a file into memory.
+; In:  A = address of a 3-byte table (low, high, bank) in the caller's data
+;      bank: where the file goes.
+; Out: carry set if the transfer succeeded; clear if it failed, was
+;      cancelled, or the caller isn't the foreground process.
+
+k_load:
+        SVC_ENTER
+        pha
+        tax                     ; table address
+        A8
+        lda SVC_DBR+2,s         ; read the table from the caller's bank
+        pha
+        plb
+        A16
+        lda a:0,x
+        sta f:XM_DP+ptr
+        A8
+        lda a:2,x
+        sta f:XM_DP+ptrb
+        phk
+        plb                     ; data bank 0
+        A16
+        jsr xm_open
+        bcc @done
+        AXY8
+        jsr XModemRcv
+        AXY16
+        jsr xm_close
+@done:
+        pla                     ; the caller's A (carry unchanged)
+        bcc @failed
+        SVC_SEC
+        SVC_EXIT
+@failed:
+        SVC_CLC
+        SVC_EXIT
+
+; ---------------------------------------------------------------------------
+; K_SAVE: send memory as a file.
+; In:  A = address of a 3-byte table (low, high, bank): the first byte to send.
+;      X = address of a 3-byte table: how many bytes to send.
+;      Both tables are in the caller's data bank.
+; Out: carry set if the transfer succeeded; clear if it failed, was
+;      cancelled, or the caller isn't the foreground process.
+
+k_save:
+        SVC_ENTER
+        pha
+        tay                     ; start table; X = count table
+        A8
+        lda SVC_DBR+2,s         ; read the tables from the caller's bank
+        pha
+        plb
+        A16
+        lda a:0,y
+        sta f:XM_DP+ptr
+        lda a:0,x
+        sta f:XM_DP+count
+        A8
+        lda a:2,y
+        sta f:XM_DP+ptrb
+        lda a:2,x
+        sta f:XM_DP+countb
+        phk
+        plb                     ; data bank 0
+        A16
+        jsr xm_open
+        bcc @done
+        AXY8
+        jsr XModemSend
+        AXY16
+        jsr xm_close
+@done:
+        pla
+        bcc @failed
+        SVC_SEC
+        SVC_EXIT
+@failed:
+        SVC_CLC
+        SVC_EXIT
+
+; xm_open: claim the console for a transfer.
+; A, X, Y 16-bit, D = 0, data bank 0.
+; Out: carry set, D = XM_DP, console locked, raw receive on. Carry clear
+; (and nothing changed) if the caller isn't the foreground process.
+xm_open:
+        lda current_proc
+        cmp fg_proc
+        bne @refuse
+        lda #XM_DP
+        tcd
+        A8
+        stz locked
+        A16
+        lda current_proc        ; take the lock unless the caller has it already
+        inc a
+        inc a
+        cmp con_owner
+        beq @have_lock
+        jsl K_CON_LOCK
+        A8
+        lda #1
+        sta locked
+        A16
+@have_lock:
+        A8
+        lda #1
+        sta rx_raw              ; Ctrl-Z is data until the transfer ends
+        A16
+        sec
+        rts
+@refuse:
+        clc
+        rts
+
+; xm_close: undo xm_open. Keeps carry. A, X, Y 16-bit, D = XM_DP.
+xm_close:
+        php
+        A8
+        stz rx_raw
+        lda locked
+        beq @kept
+        jsl K_CON_UNLOCK
+@kept:
+        A16
+        plp
+        rts
 
         .a8
         .i8

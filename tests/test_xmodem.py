@@ -190,6 +190,29 @@ class SaveTest(unittest.TestCase):
 
 class TransferTest(unittest.TestCase):
 
+    def test_a_program_can_use_the_services(self):
+        sh = Shell(self)
+        bank = sh.run(b'xfer')
+        data = every_byte(256)
+        peer = Peer(sh)
+        peer.upload(data)                       # its K_LOAD
+        sh.expect(GOOD, seconds=3)
+        self.assertEqual(bytes(sh.m.bus.ram[(bank << 16) + 0x8000:(bank << 16) + 0x8100]), data)
+        sh.mark = peer.pos
+        peer = Peer(sh)
+        self.assertEqual(peer.download(), data)  # its K_SAVE, with the lock held
+        sh.expect(GOOD + b'xfer ok\r\n> ', seconds=3)
+        self.assertEqual(sh.word('con_owner'), 0)
+        sh.assertClean()
+
+    def test_a_background_caller_is_refused(self):
+        sh = Shell(self)
+        sh.background(b'bgxfer')
+        sh.expect(b'bgxfer refused\r\n', seconds=2)
+        self.assertNotIn(b'Begin XMODEM', bytes(sh.m.acia.output))
+        self.assertEqual(sh.m.peek(0x079000), 0)
+        self.assertIn(b'bank state', sh.command(b'ps'))
+
     def test_other_output_waits_for_the_transfer(self):
         # chatter prints all the time without taking the console lock. None
         # of it may land inside the transfer, and both ends must still agree.

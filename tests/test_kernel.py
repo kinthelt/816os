@@ -238,7 +238,7 @@ class MonitorTest(unittest.TestCase):
 
     def test_help_lists_programs(self):
         sh = Shell(self)
-        self.assertIn(b"programs: torture echoq quitter crasher hog chatter\r\n", sh.command(b"help"))
+        self.assertIn(b"programs: torture echoq quitter crasher hog chatter xfer bgxfer\r\n", sh.command(b"help"))
 
 
 class DemoTest(unittest.TestCase):

@@ -12,7 +12,7 @@
 .include "os816.inc"
 
 .import k_putc, k_getc, k_puts, k_con_lock, k_con_unlock
-.import k_yield, k_exit
+.import k_yield, k_exit, k_load, k_save
 
 .segment "CODE"
 
@@ -46,3 +46,5 @@ k_ticks:
         ENTRY K_TICKS,      k_ticks
         ENTRY K_CON_LOCK,   k_con_lock
         ENTRY K_CON_UNLOCK, k_con_unlock
+        ENTRY K_LOAD,       k_load
+        ENTRY K_SAVE,       k_save

@@ -26,5 +26,16 @@ K_TICKS       = $00FF12   ; A = low 16 bits of the timer tick count.
 K_CON_LOCK    = $00FF15   ; Take the console lock, yielding while another process
                           ; holds it. Not recursive.
 K_CON_UNLOCK  = $00FF18   ; Release the console lock, if this process holds it.
+K_LOAD        = $00FF1B   ; Receive a file with XMODEM/CRC over the console.
+                          ; A = address of a 3-byte table (low, high, bank):
+                          ; where the file goes. Writes whole 128-byte blocks.
+K_SAVE        = $00FF1E   ; Send memory as a file with XMODEM/CRC.
+                          ; A = address of a 3-byte table: the first byte.
+                          ; X = address of a 3-byte table: the byte count.
+                          ; For both: the tables are in the caller's data
+                          ; bank; carry set on success, clear on failure,
+                          ; cancel (ESC or CAN), or if the caller isn't the
+                          ; foreground process. Only one transfer runs at a
+                          ; time, and no other output appears during it.
 
 TICK_HZ       = 200       ; timer ticks per second (5 ms slices)

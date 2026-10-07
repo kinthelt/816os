@@ -37,8 +37,6 @@
 .include "os816.inc"
 
 .import create_process, release_slot
-.import XModemSend, XModemRcv
-.importzp xm_ptr, xm_count
 .import app_count, app_names, app_image, app_size
 
 .export shell_main, shell_name
@@ -71,6 +69,8 @@ START   = $1F                   ; input index of the line's first word
 JOB     = $20                   ; slot * 2 of the foreground job (2 bytes)
 BRKS    = $22                   ; brk_count when the job started (2 bytes)
 SLOT    = $24                   ; slot * 2 (2 bytes)
+XSTART  = $26                   ; save: first address (3 bytes), a K_SAVE table
+XCOUNT  = $29                   ; save: byte count (3 bytes), a K_SAVE table
 
 .macro PRINT str
         A16
@@ -532,19 +532,21 @@ no_such:
         rts
 
 ; ---------------------------------------------------------------------------
-; save <start>.<end>, load <addr>: XMODEM/CRC transfers (kernel/xmodem.s).
-; Addresses are up to six hex digits, bank first, as in the memory
-; commands. Files are raw memory images in whole 128-byte blocks.
+; save <start>.<end>, load <addr>: the K_SAVE and K_LOAD services, which do
+; the XMODEM/CRC transfer. Addresses are up to six hex digits, bank first,
+; as in the memory commands. The services take 3-byte tables in the
+; caller's data bank; the shell's data bank is 0, so a table in its direct
+; page is at DP_BASE plus its offset.
 
 cmd_save:
         jsr parse_hex24         ; start
         bcs xfer_usage
         lda L
-        sta xm_ptr
+        sta XSTART
         lda H
-        sta xm_ptr+1
+        sta XSTART+1
         lda BK
-        sta xm_ptr+2
+        sta XSTART+2
         lda IN,x
         cmp #'.'
         bne xfer_usage
@@ -555,56 +557,42 @@ cmd_save:
         bne xfer_usage
         sec                     ; count = end - start + 1
         lda L
-        sbc xm_ptr
-        sta xm_count
+        sbc XSTART
+        sta XCOUNT
         lda H
-        sbc xm_ptr+1
-        sta xm_count+1
+        sbc XSTART+1
+        sta XCOUNT+1
         lda BK
-        sbc xm_ptr+2
-        sta xm_count+2
+        sbc XSTART+2
+        sta XCOUNT+2
         bcc xfer_usage          ; end before start
-        inc xm_count
+        inc XCOUNT
         bne @send
-        inc xm_count+1
+        inc XCOUNT+1
         bne @send
-        inc xm_count+2
+        inc XCOUNT+2
 @send:
-        jsr begin_xfer
-        jsr XModemSend
-        jmp end_xfer
+        AXY16
+        lda #DP_BASE + XSTART
+        ldx #DP_BASE + XCOUNT
+        jsl K_SAVE
+        AXY8
+        rts
 
 cmd_load:
-        jsr parse_hex24
+        jsr parse_hex24         ; leaves the address in L, H, BK: a table
         bcs xfer_usage
         jsr end_of_line
         bne xfer_usage
-        lda L
-        sta xm_ptr
-        lda H
-        sta xm_ptr+1
-        lda BK
-        sta xm_ptr+2
-        jsr begin_xfer
-        jsr XModemRcv
-        jmp end_xfer
+        A16
+        lda #DP_BASE + L
+        jsl K_LOAD
+        A8
+        rts
 
 xfer_usage:
         LOCK
         PRINT msg_xfer_usage
-        UNLOCK
-        rts
-
-; The transfer owns the console: no other process's output can get into
-; the stream, and Ctrl-Z ($1A) is just another byte until it's over.
-begin_xfer:
-        LOCK
-        lda #1
-        sta rx_raw
-        rts
-
-end_xfer:
-        stz rx_raw
         UNLOCK
         rts
 
