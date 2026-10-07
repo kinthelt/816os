@@ -37,12 +37,12 @@ k_ticks:
         jmp target
 .endmacro
 
-        ENTRY K_PUTC,       k_putc
-        ENTRY K_GETC,       k_getc
-        ENTRY K_PUTS,       k_puts
-        ENTRY K_YIELD,      k_yield
-        ENTRY K_EXIT,       k_exit
-        ENTRY K_GETPID,     k_getpid
-        ENTRY K_TICKS,      k_ticks
-        ENTRY K_CON_LOCK,   k_con_lock
-        ENTRY K_CON_UNLOCK, k_con_unlock
+        ENTRY K_PUTC,       k_putc       ; $FFB0
+        ENTRY K_GETC,       k_getc       ; $FFB3
+        ENTRY K_PUTS,       k_puts       ; $FFB6
+        ENTRY K_YIELD,      k_yield      ; $FFB9
+        ENTRY K_EXIT,       k_exit       ; $FFBC
+        ENTRY K_GETPID,     k_getpid     ; $FFBF
+        ENTRY K_TICKS,      k_ticks      ; $FFC2
+        ENTRY K_CON_LOCK,   k_con_lock   ; $FFC5
+        ENTRY K_CON_UNLOCK, k_con_unlock ; $FFC8
