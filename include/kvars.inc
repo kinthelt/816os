@@ -9,5 +9,5 @@
 .import current_proc, saved_stack, proc_state
 .import ticks, tx_pending, con_lock, con_owner
 .import kernel_sp_save, new_entry, mvn_stub
-.import fg_proc, resched, proc_name
+.import fg_proc, resched, proc_name, rx_raw
 .import brk_count, last_brk_slot, last_brk_pc

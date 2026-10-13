@@ -44,7 +44,8 @@ acia_init:
 ;
 ; Ctrl-Z never reaches the ring. It pauses the foreground program and gives
 ; the keyboard back to the shell. If the shell already has the keyboard, it
-; is ignored.
+; is ignored. In raw mode (rx_raw nonzero, during XMODEM transfers) it is
+; stored like any other byte.
 
 acia_rx_service:
         .a8
@@ -53,7 +54,10 @@ acia_rx_service:
         beq @done
         lda ACIA_DATA
         cmp #KEY_PAUSE
-        beq @pause
+        bne @store
+        ldx rx_raw
+        beq @pause              ; in raw mode, Ctrl-Z is just data
+@store:
         ldx rx_head
         sta RX_BUF,x            ; a full ring never reads this slot, so writing it is safe
         inx
@@ -84,7 +88,11 @@ acia_rx_service:
 ; putc_raw: send one character.
 ; In: A 8-bit = character. Data bank 0; any D, any index width.
 ; Clobbers A and B. Interrupts are only off for the few instructions
-; that check the timer and start the next send.
+; that check the lock and the timer and start the next send.
+;
+; While another process holds the console lock, this yields and waits,
+; even for a caller that never takes the lock itself. So output can't land
+; in the middle of someone else's line, or an XMODEM transfer.
 
 putc_raw:
         .a8
@@ -92,6 +100,14 @@ putc_raw:
 @wait:
         php
         sei
+        lda con_lock
+        beq @unlocked
+        lda current_proc        ; slot numbers are below $100: 8 bits will do
+        inc a
+        inc a
+        cmp con_owner
+        bne @blocked
+@unlocked:
         lda tx_pending
         beq @ready              ; nothing sent yet
         lda VIA_IFR
@@ -110,6 +126,10 @@ putc_raw:
         sta tx_pending
         plp
         rts
+@blocked:
+        plp
+        cop $00                 ; yield until the holder lets go
+        bra @wait
 
 ; ---------------------------------------------------------------------------
 ; K_PUTC: A low byte = character.
