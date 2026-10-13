@@ -23,7 +23,7 @@
 .import acia_rx_service, shell_main, shell_name
 
 .export irq_native, cop_native, brk_native
-.export create_process, release_slot, start_shell, k_exit, k_yield
+.export create_process, release_slot, start_shell, k_exit, k_yield, k_exec
 
 FRAME_P   = 10                  ; frame offsets, see above
 FRAME_PC  = 11
@@ -224,6 +224,43 @@ k_yield:
         rtl
 
 ; ---------------------------------------------------------------------------
+; K_EXEC: start the program at APP_LOAD ($0000) of a bank as a new process.
+; In:  A low byte = bank number (1-7).
+; Out: carry set if it started; carry clear if the bank number is out of
+;      range or a process already has that bank.
+; The new process runs in the background: it doesn't get the keyboard.
+; Nothing checks that the bank holds a program. If it's empty, the first
+; byte is $00, a BRK, and the process just dies.
+
+k_exec:
+        SVC_ENTER
+        pha
+        and #$00FF
+        beq @refuse             ; bank 0 is the shell's
+        cmp #NUM_PROCS
+        bcs @refuse
+        asl a
+        tax                     ; slot * 2
+        php
+        sei                     ; check and claim the slot in one step
+        lda proc_state,x
+        bne @busy
+        lda #exec_name
+        sta proc_name,x
+        lda #APP_LOAD
+        jsr create_process
+        plp
+        pla
+        SVC_SEC
+        SVC_EXIT
+@busy:
+        plp
+@refuse:
+        pla
+        SVC_CLC
+        SVC_EXIT
+
+; ---------------------------------------------------------------------------
 ; create_process: build a process's initial frame on its stack so the
 ; scheduler can start it like any other stopped process.
 ;
@@ -282,6 +319,8 @@ create_process:
         rts
 
 .segment "RODATA"
+
+exec_name:   .asciiz "loaded"   ; ps name for a process started by K_EXEC
 
 ; Per-slot constants (README section 5). Slot n is bank n.
 stack_top:   .word STACK_BASE + 1 * STACK_SIZE - 1, STACK_BASE + 2 * STACK_SIZE - 1

@@ -12,7 +12,7 @@
 .include "os816.inc"
 
 .import k_putc, k_getc, k_puts, k_con_lock, k_con_unlock
-.import k_yield, k_exit, k_load, k_save
+.import k_yield, k_exit, k_load, k_save, k_exec
 
 .segment "CODE"
 
@@ -48,3 +48,4 @@ k_ticks:
         ENTRY K_CON_UNLOCK, k_con_unlock ; $FFC8
         ENTRY K_LOAD,       k_load       ; $FFCB
         ENTRY K_SAVE,       k_save       ; $FFCE
+        ENTRY K_EXEC,       k_exec       ; $FFD1

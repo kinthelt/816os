@@ -37,5 +37,9 @@ K_SAVE        = $00FFCE   ; Send memory as a file with XMODEM/CRC.
                           ; cancel (ESC or CAN), or if the caller isn't the
                           ; foreground process. Only one transfer runs at a
                           ; time, and no other output appears during it.
+K_EXEC        = $00FFD1   ; Start the program at $0000 of a bank as a new
+                          ; process, in the background. A low byte = bank
+                          ; (1-7). Carry set if it started; clear if the bank
+                          ; number is out of range or the bank is in use.
 
 TICK_HZ       = 200       ; timer ticks per second (5 ms slices)
