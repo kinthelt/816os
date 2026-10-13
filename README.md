@@ -25,6 +25,8 @@ ticker 1: 0000
 > kill 1              end it; kill 0 restarts the shell
 > 21000: a9 00        Wozmon-style store, examine (21000) and block examine (21000.2100f)
 > load 21000          receive a file with XMODEM/CRC into memory from $02:1000
+> load 30000          load a program into bank 3 ...
+> run 3               ... and run it from $03:0000
 > save 21000.213ff    send $02:1000-$02:13FF with XMODEM/CRC
 > help                commands and the programs in ROM
 ```
@@ -41,7 +43,8 @@ Input is case-insensitive. ESC cancels a line, or stops a long examine, or abort
 - **Idle process.** After boot, the boot code becomes the idle loop (`WAI`) on the kernel stack, in a pseudo-slot 8 that only runs when no process is ready. While the shell is waiting for input it polls and yields, so idle rarely runs yet; blocking input would fix that.
 - **Yield is `COP`.** `COP` pushes the same frame as an interrupt, so the yield handler shares the switch code. The next process gets the rest of the current slice; timer 1 is not restarted, so ticks stay evenly spaced.
 - **Exit.** `K_EXIT`, or `RTL` from a process's entry point, frees its slot. `BRK` in a process kills it and records the slot and address. Either way, the kernel releases the console lock if the process held it.
-- **Programs are loaded from ROM on demand.** Each image is linked at $0000 (`cfg/app.cfg`). `run` copies it with `MVN` into $0000 of the first free bank. Running a program twice gives two copies in two banks.
+- **Programs are loaded from ROM on demand.** Each image is linked at $0000 (`cfg/app.cfg`). `run <name>` copies it with `MVN` into $0000 of the first free bank. Running a program twice gives two copies in two banks.
+- **Programs already in memory run with `run <bank>`.** It starts whatever is at $0000 of that bank, for example a program received with `load`, through the `K_EXEC` service, which any program can call. The bank must be free. Programs must be built like the ROM ones: linked at $0000 with `cfg/app.cfg`, calling services through `include/os816.inc`. `$0000` of banks 1-7 is ordinary RAM: every process's direct page and stack are in bank 0. Nothing checks that a bank holds a program; an empty one starts with `$00`, a BRK, so the process dies with the usual message.
 
 **Layout:**
 
@@ -54,7 +57,7 @@ Input is case-insensitive. ESC cancels a line, or stops a long examine, or abort
 | `tests/` | Simulator tests and the test ROM's programs |
 | `tools/sim816.py` | 65C816 + W65C22 + W65C51N simulator |
 
-**Kernel services:** call with `JSL` to the fixed addresses in `include/os816.inc`: `K_PUTC`, `K_GETC`, `K_PUTS`, `K_YIELD`, `K_EXIT`, `K_GETPID`, `K_TICKS`, `K_CON_LOCK`, `K_CON_UNLOCK`, `K_LOAD`, `K_SAVE`. They keep the caller's register widths, X, Y, D and data bank register. A service that may be preempted keeps its working state on the caller's stack (`K_PUTS` points D at its stack frame), so two processes can be inside the same service at once.
+**Kernel services:** call with `JSL` to the fixed addresses in `include/os816.inc`: `K_PUTC`, `K_GETC`, `K_PUTS`, `K_YIELD`, `K_EXIT`, `K_GETPID`, `K_TICKS`, `K_CON_LOCK`, `K_CON_UNLOCK`, `K_LOAD`, `K_SAVE`, `K_EXEC`. They keep the caller's register widths, X, Y, D and data bank register. A service that may be preempted keeps its working state on the caller's stack (`K_PUTS` points D at its stack frame), so two processes can be inside the same service at once.
 
 **The simulator** models the CPU, the VIA timers and port B, and the ACIA. It includes the W65C51N's stuck transmit-empty bit and counts receive overruns and characters sent too close together. Cycle counts are approximate, so timings are close to the hardware's but not exact. The tests drive the machine through the shell, as a person at the terminal would. They cover register preservation under preemption (a torture program checks A, B, X, Y, D, the data bank register and register widths while timer and ACIA interrupts switch processes), running one image in several banks, Ctrl-Z, `fg`, `bg` and `kill`, foreground-only input, exit, BRK recovery with the console lock held, restarting the shell, memory examine and store, line editing, and 200-character receive bursts with no overruns. An XMODEM/CRC peer written in Python stands in for the terminal program to test `K_LOAD` and `K_SAVE`, through the shell and from a program: every byte value, bank boundaries, damaged and resent blocks, cancelling from either end, a caller that already holds the console lock, a background caller (refused), and a background process printing throughout.
 
@@ -468,7 +471,8 @@ Programs currently run in bank 1 in emulation mode, and ACIA receive is interrup
 | Yield call | Built, as `COP` (section 0). `K_CON_LOCK` yields while it waits |
 | Receive flow control | Off (section 0). Revisit with blocking input |
 | Shell | Built into the kernel as the process in bank 0 (section 0) |
-| Loading new programs | `load` puts a file anywhere in memory (section 0). Starting loaded code as a process is still to do |
+| Loading new programs | `load` puts a file anywhere in memory; `run <bank>` starts the program at $0000 of a bank (section 0) |
+| Emulation-mode programs (MS BASIC) | Undecided. Proposed: BASIC in ROM (for example at $C000), given the whole of bank 0 with the kernel stopped (section 15). Exit behavior open |
 | Filesystem | Later. Files are raw memory images sent over XMODEM |
 | VIA IRQ wiring | Check the chip variant and the wiring (section 11) |
 

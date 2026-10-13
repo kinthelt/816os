@@ -358,11 +358,17 @@ cmd_ps:
         rts
 
 ; ---------------------------------------------------------------------------
-; run <name>
+; run <name>: copy a program from ROM into the first free bank and run it.
+; run <bank>: run what's already at $0000 of that bank (say, after load).
+; Either way it runs in the foreground.
 
 cmd_run:
-        stx START               ; the name
-        stz CIDX                ; program table index * 2
+        stx START
+        jsr parse_bank          ; a bank number?
+        bcs @by_name
+        jmp run_bank
+@by_name:
+        stz CIDX                ; no: a name. Program table index * 2
 @find:
         lda CIDX
         lsr a
@@ -437,6 +443,30 @@ cmd_run:
         plp
         AXY8
 
+        LOCK
+        jsr print_job
+        PRINT msg_crlf
+        UNLOCK
+        jmp wait_fg
+
+run_bank:                       ; X = SLOT = bank * 2
+        jsr begin_job
+        php
+        sei                     ; it mustn't run before it has the keyboard
+        A16
+        lda SLOT
+        lsr a
+        jsl K_EXEC
+        A8
+        bcs @started
+        plp
+        LOCK
+        PRINT msg_bank_busy
+        UNLOCK
+        rts
+@started:
+        stx fg_proc
+        plp
         LOCK
         jsr print_job
         PRINT msg_crlf
@@ -927,6 +957,7 @@ msg_xfer_usage: .byte "usage: save <start>.<end> or load <address>", 13, 10, 0
 msg_no_such:    .byte "no such process", 13, 10, 0
 msg_no_program: .byte "no such program; try help", 13, 10, 0
 msg_no_bank:    .byte "no free bank", 13, 10, 0
+msg_bank_busy:  .byte "bank in use", 13, 10, 0
 msg_running:    .byte "already running", 13, 10, 0
 msg_open:       .asciiz "["
 msg_close:      .asciiz "] "
@@ -939,6 +970,7 @@ msg_paused:     .asciiz "    paused "
 msg_help:
         .byte "ps            list processes", 13, 10
         .byte "run <name>    run a program in the first free bank", 13, 10
+        .byte "run <bank>    run the program at $0000 of a bank (1-7)", 13, 10
         .byte "fg <bank>     resume a process in the foreground", 13, 10
         .byte "bg <bank>     resume a paused process in the background", 13, 10
         .byte "kill <bank>   end a process (kill 0 restarts the shell)", 13, 10
