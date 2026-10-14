@@ -23,15 +23,17 @@ bgxfer:     .incbin "bgxfer.bin"
 bgxfer_end:
 spawner:    .incbin "spawner.bin"
 spawner_end:
+sleeper:    .incbin "sleeper.bin"
+sleeper_end:
 
 .segment "RODATA"
-app_count:  .word 9
-app_names:  .word n_torture, n_echoq, n_quitter, n_crasher, n_hog, n_chatter, n_xfer, n_bgxfer, n_spawner
-app_image:  .word torture, echoq, quitter, crasher, hog, chatter, xfer, bgxfer, spawner
+app_count:  .word 10
+app_names:  .word n_torture, n_echoq, n_quitter, n_crasher, n_hog, n_chatter, n_xfer, n_bgxfer, n_spawner, n_sleeper
+app_image:  .word torture, echoq, quitter, crasher, hog, chatter, xfer, bgxfer, spawner, sleeper
 app_size:   .word torture_end - torture, echoq_end - echoq
             .word quitter_end - quitter, crasher_end - crasher, hog_end - hog
             .word chatter_end - chatter, xfer_end - xfer, bgxfer_end - bgxfer
-            .word spawner_end - spawner
+            .word spawner_end - spawner, sleeper_end - sleeper
 
 n_torture:  .asciiz "torture"
 n_echoq:    .asciiz "echoq"
@@ -42,3 +44,4 @@ n_chatter:  .asciiz "chatter"
 n_xfer:     .asciiz "xfer"
 n_bgxfer:   .asciiz "bgxfer"
 n_spawner:  .asciiz "spawner"
+n_sleeper:  .asciiz "sleeper"

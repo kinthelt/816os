@@ -11,7 +11,7 @@
 .export current_proc, saved_stack, proc_state
 .export ticks, tx_pending, con_lock, con_owner
 .export kernel_sp_save, new_entry, mvn_stub
-.export fg_proc, resched, proc_name, rx_raw
+.export fg_proc, resched, proc_name, rx_raw, rx_held
 .export brk_count, last_brk_slot, last_brk_pc
 
 .segment "ZEROPAGE"
@@ -29,6 +29,7 @@ proc_name:      .res NUM_SLOTS * 2  ; address of each process's name, in ROM
 fg_proc:        .res 2              ; slot * 2 of the process that gets keyboard input
 resched:        .res 2              ; nonzero: switch processes at the end of this IRQ
 rx_raw:         .res 1              ; nonzero: Ctrl-Z is data, not pause (XMODEM)
+rx_held:        .res 1              ; nonzero: RTS is high, the sender should stop
 
 ticks:          .res 4      ; timer 1 ticks since boot
 

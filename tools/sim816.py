@@ -187,6 +187,14 @@ class VIA:
 # W65C51N ACIA
 
 class ACIA:
+    """W65C51N, plus the far end of the serial line.
+
+    The far end sends whatever send() queues, one character per character
+    time, and honours RTS as a USB serial adapter with hardware flow control
+    does: once RTS goes high (command register bits 3-2 = 00) it stops, after
+    finishing up to `skid` more characters already on their way.
+    """
+
     def __init__(self, now):
         self.now = now
         self.data = 0
@@ -195,8 +203,14 @@ class ACIA:
         self.irq_flag = False
         self.cmd = 0
         self.ctrl = 0
-        self.rx_queue = []        # (arrival cycle, byte), in order
+        self.pending = bytearray()  # bytes the far end still has to send
+        self.next_time = 0          # when the next one finishes arriving
         self.last_rx_time = -CHAR_CYCLES
+        self.honor_rts = True
+        self.skid = 3               # characters still sent after RTS goes high
+        self.skid_left = 0
+        self.rts_raises = 0         # times RTS went high
+        self.tx_while_held = 0      # characters sent while RTS was high
         self.output = bytearray()
         self.last_tx_time = None
         self.tx_too_soon = 0      # characters sent before the last one finished
@@ -205,17 +219,30 @@ class ACIA:
     def rx_irq_enabled(self):
         return (self.cmd & 0x03) == 0x01   # DTR on, receive IRQ not disabled
 
+    def rts_high(self):
+        return (self.cmd & 0x0C) == 0
+
+    def _may_send(self):
+        return not self.honor_rts or not self.rts_high() or self.skid_left > 0
+
     def send(self, data, gap=CHAR_CYCLES):
-        """Queue bytes to arrive at the receiver, back to back at the line rate."""
-        for b in data:
-            t = max(self.now(), self.last_rx_time) + gap
-            self.rx_queue.append((t, b))
-            self.last_rx_time = t
+        """Queue bytes for the far end to send, back to back at the line rate."""
+        if not self.pending:
+            self.next_time = max(self.now(), self.last_rx_time) + gap
+        self.pending += bytes(data)
 
     def poll(self):
         now = self.now()
-        while self.rx_queue and self.rx_queue[0][0] <= now:
-            _, b = self.rx_queue.pop(0)
+        while self.pending and self.next_time <= now:
+            if not self._may_send():
+                # Stopped by RTS: start again one character time after it drops.
+                self.next_time = now + CHAR_CYCLES
+                break
+            if self.honor_rts and self.rts_high():
+                self.skid_left -= 1
+            b = self.pending.pop(0)
+            self.last_rx_time = self.next_time
+            self.next_time += CHAR_CYCLES
             if self.rdrf:
                 self.overrun = True
                 self.rx_overruns += 1
@@ -226,7 +253,9 @@ class ACIA:
                 self.irq_flag = True
 
     def next_rx(self):
-        return self.rx_queue[0][0] if self.rx_queue else None
+        if self.pending and self._may_send():
+            return self.next_time
+        return None
 
     def read(self, reg):
         if reg == 0:
@@ -248,13 +277,21 @@ class ACIA:
             if self.last_tx_time is not None and now - self.last_tx_time < CHAR_CYCLES:
                 self.tx_too_soon += 1
             self.last_tx_time = now
+            if self.rts_high():
+                self.tx_while_held += 1
             self.output.append(v)
         elif reg == 1:                    # programmed reset
             self.cmd &= 0xE0
             self.overrun = False
             self.irq_flag = False
         elif reg == 2:
+            was_high = self.rts_high()
             self.cmd = v
+            if self.rts_high() and not was_high:
+                self.rts_raises += 1
+                self.skid_left = self.skid
+            elif was_high and not self.rts_high() and self.pending:
+                self.next_time = max(self.next_time, self.now() + CHAR_CYCLES)
         else:
             self.ctrl = v
 
