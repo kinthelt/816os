@@ -31,6 +31,7 @@
 ;   - For the whole transfer the service holds the console lock, so no other
 ;     output can land in the middle of it, and turns on raw receive so that
 ;     a $1A byte isn't taken as Ctrl-Z.
+;   - Loads go into banks 1-7 only, never bank 0 (see K_LOAD below).
 
 .p816
 .include "hw.inc"
@@ -82,9 +83,14 @@ ESC             = $1B
 ; ---------------------------------------------------------------------------
 ; K_LOAD: receive a file into memory.
 ; In:  A = address of a 3-byte table (low, high, bank) in the caller's data
-;      bank: where the file goes.
+;      bank: where the file goes, in banks 1-7.
 ; Out: carry set if the transfer succeeded; clear if it failed, was
 ;      cancelled, or the caller isn't the foreground process.
+; A load never writes to bank 0, where the kernel, the shell and every
+; process's stack live. A start address outside banks 1-7 is refused before
+; the transfer begins (nothing is sent). A file that would run past the end
+; of bank 7 is cancelled at the block that would go over; the blocks before
+; it are already in memory.
 
 k_load:
         SVC_ENTER
@@ -102,7 +108,13 @@ k_load:
         sta f:XM_DP+ptrb
         phk
         plb                     ; data bank 0
-        A16
+        dec a                   ; banks 1-7 only: bank 0 holds the kernel,
+        cmp #LAST_RAM_BANK      ; the shell and every stack, and higher
+        A16                     ; banks alias banks 0-7 (or aren't RAM)
+        bcc @open
+        clc
+        bra @done
+@open:
         jsr xm_open
         bcc @done
         AXY8
@@ -428,6 +440,15 @@ BadCrc:
         CHROUT                  ; send NAK to resend block
         bra StartBlk            ; start over, get the block again
 GoodCrc:
+        lda ptr                 ; would this block run past the end of bank 7
+        clc                     ; (into $08:0000, an alias of bank 0)?
+        adc #$7F
+        lda ptrh                ; lda keeps the carry
+        adc #$00
+        lda ptrb
+        adc #$00                ; bank of the block's last byte
+        cmp #LAST_RAM_BANK + 1
+        bcs RCancel             ; yes: cancel, leaving bank 0 alone
         ldx #$02
 CopyBlk3:
         lda Rbuff,x             ; get data byte from buffer
