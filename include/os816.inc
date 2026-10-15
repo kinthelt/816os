@@ -29,6 +29,9 @@ K_CON_UNLOCK  = $00FFC8   ; Release the console lock, if this process holds it.
 K_LOAD        = $00FFCB   ; Receive a file with XMODEM/CRC over the console.
                           ; A = address of a 3-byte table (low, high, bank):
                           ; where the file goes. Writes whole 128-byte blocks.
+                          ; Banks 1-7 only: carry clear at once, with nothing
+                          ; sent, for any other bank, and the transfer is
+                          ; cancelled if the file would run past $07:FFFF.
 K_SAVE        = $00FFCE   ; Send memory as a file with XMODEM/CRC.
                           ; A = address of a 3-byte table: the first byte.
                           ; X = address of a 3-byte table: the byte count.

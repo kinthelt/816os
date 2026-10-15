@@ -22,7 +22,9 @@ STACK_SIZE  = $0800         ; ... up to the next one, minus 1. Ends at $4AFF.
 KSTACK_TOP  = $5FFF         ; kernel stack: boot, then the idle loop
 XM_DP       = $4B00         ; K_LOAD / K_SAVE direct page
 XM_BUF      = $4C00         ; K_LOAD / K_SAVE block buffer, 132 bytes
-RX_BUF      = $5D00         ; 256-byte ACIA receive ring
+RX_BUF      = $5D00         ; 256-byte ACIA receive ring (holds up to 255)
+RX_STOP     = 192           ; raise RTS when this many bytes are waiting
+RX_RESUME   = 128           ; lower it again when fewer than this are
 APP_LOAD    = $0000         ; where a program image is loaded in its bank
 
 SHELL_STACK_TOP = STACK_BASE + STACK_SIZE - 1

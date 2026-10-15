@@ -614,10 +614,19 @@ cmd_load:
         bcs xfer_usage
         jsr end_of_line
         bne xfer_usage
+        lda BK                  ; K_LOAD refuses anything outside banks 1-7
+        dec a                   ; too; this just says why
+        cmp #LAST_RAM_BANK
+        bcs @bad_bank
         A16
         lda #DP_BASE + L
         jsl K_LOAD
         A8
+        rts
+@bad_bank:
+        LOCK
+        PRINT msg_load_bank
+        UNLOCK
         rts
 
 xfer_usage:
@@ -954,6 +963,7 @@ msg_cancel:     .byte "\", 13, 10, 0
 msg_what:       .byte "?", 13, 10, 0
 msg_usage:      .byte "usage: fg|bg|kill <bank 0-7>", 13, 10, 0
 msg_xfer_usage: .byte "usage: save <start>.<end> or load <address>", 13, 10, 0
+msg_load_bank:  .byte "load: banks 1-7 only (e.g. load 20000)", 13, 10, 0
 msg_no_such:    .byte "no such process", 13, 10, 0
 msg_no_program: .byte "no such program; try help", 13, 10, 0
 msg_no_bank:    .byte "no free bank", 13, 10, 0
@@ -975,7 +985,7 @@ msg_help:
         .byte "bg <bank>     resume a paused process in the background", 13, 10
         .byte "kill <bank>   end a process (kill 0 restarts the shell)", 13, 10
         .byte "save <a>.<b>  send memory a-b with XMODEM (e.g. save 21000.213ff)", 13, 10
-        .byte "load <a>      receive a file with XMODEM into memory at a", 13, 10
+        .byte "load <a>      receive a file with XMODEM into memory at a (banks 1-7)", 13, 10
         .byte "help          this list", 13, 10
         .byte "21000         examine $02:1000", 13, 10
         .byte "21000.2100f   examine $02:1000-$02:100F", 13, 10

@@ -32,6 +32,7 @@ acia_init:
         lda ACIA_DATA
         stz rx_head
         stz rx_tail
+        stz rx_held
         stz tx_pending
         A16
         rts
@@ -40,7 +41,9 @@ acia_init:
 ; acia_rx_service: called from the IRQ handler when the ACIA's status had
 ; its IRQ bit set.
 ; In: A = the status byte. A, X 8-bit, D = 0, data bank 0.
-; If the ring is full, the byte is dropped.
+; If the ring is full, the byte is dropped. Before that happens, receive
+; flow control raises RTS once RX_STOP bytes are waiting, and K_GETC
+; lowers it again when fewer than RX_RESUME are left.
 ;
 ; Ctrl-Z never reaches the ring. It pauses the foreground program and gives
 ; the keyboard back to the shell. If the shell already has the keyboard, it
@@ -62,8 +65,19 @@ acia_rx_service:
         sta RX_BUF,x            ; a full ring never reads this slot, so writing it is safe
         inx
         cpx rx_tail
-        beq @done               ; full: don't advance head
+        beq @hold               ; full: don't advance head
         stx rx_head
+@hold:
+        lda rx_held             ; nearly full: ask the sender to stop. It
+        bne @done               ; may send a few more before it notices.
+        lda rx_head
+        sec
+        sbc rx_tail             ; bytes waiting (the ring wraps at 256)
+        cmp #RX_STOP
+        bcc @done
+        lda #ACIA_CMD_HOLD
+        sta ACIA_CMD            ; RTS high
+        inc rx_held
 @done:
         rts
 
@@ -162,6 +176,20 @@ k_getc:
         lda RX_BUF,x
         inx
         stx rx_tail
+        ldx rx_held             ; held off and drained enough: let the
+        beq @got                ; sender carry on
+        pha
+        lda rx_head
+        sec
+        sbc rx_tail
+        cmp #RX_RESUME
+        bcs @still_full
+        lda #ACIA_CMD_VALUE
+        sta ACIA_CMD            ; RTS low
+        stz rx_held
+@still_full:
+        pla
+@got:
         plp
         .a16
         .i16

@@ -11,6 +11,11 @@
 CPU_HZ      = 6000000
 BAUD        = 115200
 
+; RAM: bank 0 below $6000, and all of banks 1-7. Banks $08-$7F alias banks
+; 0-7 (only A16-A18 reach the RAM), so an address in them is really one in
+; banks 0-7.
+LAST_RAM_BANK = 7
+
 ; W65C22 VIA: I/O slot Y0, $6000-$63FF (registers mirrored on A0-A3)
 VIA         = $6000
 VIA_PORTB   = VIA + $0
@@ -48,6 +53,9 @@ ACIA_CTRL_VALUE = %00010000
 ; Command: no parity, no echo, RTS low with transmit interrupts off,
 ; receive interrupts on, DTR low (receiver enabled). Bits 7-6 only matter
 ; when parity is enabled (bit 5); $89 matches be6502's ACIA_SETUP.
-; The kernel never changes it after boot: no RTS flow control (README
-; section 0), because raising RTS on the 6551 also turns the transmitter off.
 ACIA_CMD_VALUE  = %10001001
+; The same with RTS high (TIC, bits 3-2, = 00): asks the other end to stop
+; sending. Per the W65C51N datasheet this only raises RTSB; the transmitter
+; keeps working. Receive flow control switches between the two (README
+; section 0).
+ACIA_CMD_HOLD   = ACIA_CMD_VALUE & %11110011

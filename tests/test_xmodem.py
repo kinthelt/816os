@@ -152,6 +152,53 @@ class LoadTest(unittest.TestCase):
         sh.pause(bank)                          # raw mode is off again
 
 
+class LoadBankTest(unittest.TestCase):
+    """Loads go into banks 1-7 only. Bank 0 holds the kernel, the shell and
+    every stack, and banks $08-$7F alias banks 0-7."""
+
+    def test_the_shell_refuses_bank_0(self):
+        sh = Shell(self)
+        for line in (b'load 2', b'load 0', b'load 5000', b'load 80000', b'load 800000'):
+            self.assertIn(b'load: banks 1-7 only', sh.command(line), line)
+        self.assertNotIn(b'Begin XMODEM', bytes(sh.m.acia.output))
+        self.assertIn(b'bank state', sh.command(b'ps'))
+        sh.assertClean()
+
+    def test_the_service_refuses_bank_0(self):
+        # A program calling K_LOAD itself gets carry clear at once, and no
+        # transfer starts.
+        sh = Shell(self)
+        sh.run(b'badload')
+        sh.expect(b'badload refused\r\n' * 3 + b'> ', seconds=2)
+        self.assertNotIn(b'Begin XMODEM', bytes(sh.m.acia.output))
+        sh.assertClean()
+
+    def test_load_up_to_the_end_of_bank_7(self):
+        sh = Shell(self)
+        data = every_byte(256)
+        LoadTest.load(self, sh, 0x07FF00, data)
+        self.assertEqual(bytes(sh.m.bus.ram[0x07FF00:0x080000]), data)
+        sh.assertClean()
+
+    def test_load_past_the_end_of_bank_7_is_cancelled(self):
+        # Block 1 fits at $07:FF01-$07:FF80. Block 2 would end at $08:0000,
+        # an alias of $00:0000: the receiver cancels instead of writing it.
+        # (The simulator also raises an error on any write to bank 8.)
+        sh = Shell(self)
+        sh.type(b'load 7ff01\r')
+        peer = Peer(sh)
+        peer.read_until({ord('C')}, seconds=3)
+        data = every_byte(256)
+        peer.send(block(1, data[:128]))
+        self.assertEqual(peer.read_until({ACK, NAK, CAN}), ACK)
+        peer.send(block(2, data[128:]))
+        self.assertEqual(peer.read_until({ACK, NAK, CAN}), CAN)
+        sh.expect(ERROR + b'> ', seconds=5)
+        self.assertEqual(bytes(sh.m.bus.ram[0x07FF01:0x07FF81]), data[:128])
+        self.assertIn(b'bank state', sh.command(b'ps'))
+        sh.assertClean()
+
+
 class SaveTest(unittest.TestCase):
 
     def save(self, sh, start, end):
